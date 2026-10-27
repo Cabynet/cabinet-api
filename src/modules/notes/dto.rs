@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub struct UpdateNoteRequest {
     pub base_revision: i32,
     pub save_id: Option<Uuid>,
+    #[schema(value_type = Option<Object>)]
     pub document: Option<JsonValue>,
     pub plain_text: Option<String>,
 }
@@ -17,6 +18,7 @@ pub struct NoteResponse {
     pub id: Uuid,
     pub revision: i32,
     pub save_id: Option<Uuid>,
+    #[schema(value_type = Option<Object>)]
     pub document: Option<JsonValue>,
     pub plain_text: Option<String>,
     pub updated_at: DateTime<Utc>,

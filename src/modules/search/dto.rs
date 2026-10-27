@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::modules::bookmarks::dto::BookmarkTagSummary;
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, utoipa::IntoParams, ToSchema)]
 pub struct SearchQuery {
     pub q: String,
     pub folder_id: Option<Uuid>,

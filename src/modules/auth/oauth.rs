@@ -20,7 +20,7 @@ pub struct OAuthStateData {
     pub redirect_uri: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, utoipa::IntoParams, ToSchema)]
 pub struct OAuthAuthorizeQuery {
     pub client_type: Option<String>,
     pub redirect_uri: Option<String>,

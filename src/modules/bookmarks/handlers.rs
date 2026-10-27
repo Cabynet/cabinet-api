@@ -35,7 +35,16 @@ pub fn router() -> Router<PgPool> {
         .route("/:id/note", get(get_note_handler).put(update_note_handler))
 }
 
-async fn get_previews(
+#[utoipa::path(
+    get,
+    path = "/v1/bookmarks/previews",
+    params(BookmarkPreviewsQuery),
+    responses(
+        (status = 200, description = "Lightweight preview metadata for given IDs", body = BookmarkPreviewsResponse)
+    ),
+    tag = "bookmarks"
+)]
+pub async fn get_previews(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Query(query): Query<BookmarkPreviewsQuery>,
@@ -51,7 +60,16 @@ async fn get_previews(
     Ok(Json(BookmarkPreviewsResponse { previews }))
 }
 
-async fn list_bookmarks(
+#[utoipa::path(
+    get,
+    path = "/v1/bookmarks",
+    params(ListBookmarksQuery),
+    responses(
+        (status = 200, description = "Keyset cursor paginated list of bookmarks", body = BookmarkListResponse)
+    ),
+    tag = "bookmarks"
+)]
+pub async fn list_bookmarks(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Query(query): Query<ListBookmarksQuery>,
@@ -61,7 +79,16 @@ async fn list_bookmarks(
     Ok(Json(resp))
 }
 
-async fn create_bookmark(
+#[utoipa::path(
+    post,
+    path = "/v1/bookmarks",
+    request_body = CreateBookmarkRequest,
+    responses(
+        (status = 201, description = "Bookmark created successfully", body = BookmarkListItem)
+    ),
+    tag = "bookmarks"
+)]
+pub async fn create_bookmark(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Json(payload): Json<CreateBookmarkRequest>,
@@ -75,7 +102,18 @@ async fn create_bookmark(
     Ok((StatusCode::CREATED, Json(item)))
 }
 
-async fn get_bookmark(
+#[utoipa::path(
+    get,
+    path = "/v1/bookmarks/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Bookmark ID")
+    ),
+    responses(
+        (status = 200, description = "Bookmark details", body = BookmarkListItem)
+    ),
+    tag = "bookmarks"
+)]
+pub async fn get_bookmark(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(id): Path<Uuid>,
@@ -85,7 +123,19 @@ async fn get_bookmark(
     Ok(Json(item))
 }
 
-async fn update_bookmark(
+#[utoipa::path(
+    patch,
+    path = "/v1/bookmarks/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Bookmark ID")
+    ),
+    request_body = UpdateBookmarkRequest,
+    responses(
+        (status = 200, description = "Updated bookmark", body = BookmarkListItem)
+    ),
+    tag = "bookmarks"
+)]
+pub async fn update_bookmark(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(id): Path<Uuid>,
@@ -100,7 +150,18 @@ async fn update_bookmark(
     Ok(Json(item))
 }
 
-async fn delete_bookmark(
+#[utoipa::path(
+    delete,
+    path = "/v1/bookmarks/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Bookmark ID")
+    ),
+    responses(
+        (status = 204, description = "Bookmark deleted successfully")
+    ),
+    tag = "bookmarks"
+)]
+pub async fn delete_bookmark(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(id): Path<Uuid>,
@@ -110,7 +171,15 @@ async fn delete_bookmark(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn get_duplicates_handler(
+#[utoipa::path(
+    get,
+    path = "/v1/bookmarks/duplicates",
+    responses(
+        (status = 200, description = "Groups of duplicate bookmarks", body = DuplicateReportResponse)
+    ),
+    tag = "bookmarks"
+)]
+pub async fn get_duplicates_handler(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<DuplicateReportResponse>, AppError> {
@@ -119,7 +188,15 @@ async fn get_duplicates_handler(
     Ok(Json(report))
 }
 
-async fn cleanup_duplicates_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/bookmarks/duplicates/cleanup",
+    responses(
+        (status = 200, description = "Duplicate cleanup summary", body = DuplicateCleanupResponse)
+    ),
+    tag = "bookmarks"
+)]
+pub async fn cleanup_duplicates_handler(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<DuplicateCleanupResponse>, AppError> {
@@ -128,7 +205,18 @@ async fn cleanup_duplicates_handler(
     Ok(Json(res))
 }
 
-async fn check_link_handler(
+#[utoipa::path(
+    post,
+    path = "/v1/bookmarks/{id}/check-link",
+    params(
+        ("id" = Uuid, Path, description = "Bookmark ID")
+    ),
+    responses(
+        (status = 200, description = "Link health check result", body = LinkHealthCheckResponse)
+    ),
+    tag = "bookmarks"
+)]
+pub async fn check_link_handler(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(id): Path<Uuid>,

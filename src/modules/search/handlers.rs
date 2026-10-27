@@ -14,6 +14,15 @@ pub fn router() -> Router<PgPool> {
     Router::new().route("/", get(search_handler))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/search",
+    params(SearchQuery),
+    responses(
+        (status = 200, description = "Search results ranked by relevance score", body = SearchResponse)
+    ),
+    tag = "search"
+)]
 pub async fn search_handler(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,

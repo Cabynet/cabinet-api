@@ -25,7 +25,7 @@ RUN touch src/main.rs && cargo build --release
 # 4. Final minimal runtime stage (~45MB)
 FROM debian:bookworm-slim AS runner
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata curl && rm -rf /var/lib/apt/lists/*
 
 # Create non-root system user
 RUN groupadd -g 1001 appuser && useradd -u 1001 -g appuser -s /bin/sh appuser

@@ -54,7 +54,7 @@ pub struct BookmarkListItem {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams, ToSchema)]
 pub struct ListBookmarksQuery {
     pub folder_id: Option<Uuid>,
     pub tag: Option<String>,
@@ -102,7 +102,7 @@ pub struct BookmarkPreviewDto {
     pub site_name: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize, utoipa::IntoParams, ToSchema)]
 pub struct BookmarkPreviewsQuery {
     pub ids: String,
 }

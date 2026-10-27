@@ -21,6 +21,16 @@ pub fn router() -> Router<PgPool> {
         .route("/:id/confirm", post(confirm_upload_handler))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/media/presign",
+    request_body = PresignUploadRequest,
+    responses(
+        (status = 201, description = "Presigned PUT URL generated successfully", body = PresignUploadResponse),
+        (status = 413, description = "Storage quota exceeded")
+    ),
+    tag = "media"
+)]
 pub async fn presign_upload_handler(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
@@ -38,6 +48,17 @@ pub async fn presign_upload_handler(
     Ok((StatusCode::CREATED, Json(res)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/media/{id}/confirm",
+    params(
+        ("id" = Uuid, Path, description = "Media Asset ID")
+    ),
+    responses(
+        (status = 200, description = "Media upload confirmed and quota updated", body = ConfirmUploadResponse)
+    ),
+    tag = "media"
+)]
 pub async fn confirm_upload_handler(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,

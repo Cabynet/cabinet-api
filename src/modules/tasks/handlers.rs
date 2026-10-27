@@ -23,6 +23,17 @@ pub fn router() -> Router<PgPool> {
         .route("/export-html", get(export_bookmarks_handler))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/tasks/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Task ID")
+    ),
+    responses(
+        (status = 200, description = "Task status and progress", body = TaskStatusDto)
+    ),
+    tag = "tasks"
+)]
 pub async fn get_task_status_handler(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
@@ -33,6 +44,14 @@ pub async fn get_task_status_handler(
     Ok(Json(task))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/tasks/import-html",
+    responses(
+        (status = 201, description = "Import task queued and processed", body = TaskStatusDto)
+    ),
+    tag = "tasks"
+)]
 pub async fn import_html_handler(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
@@ -68,6 +87,14 @@ pub async fn import_html_handler(
     Ok((StatusCode::CREATED, Json(task)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/bookmarks/export",
+    responses(
+        (status = 200, description = "Netscape Bookmark HTML file export")
+    ),
+    tag = "bookmarks"
+)]
 pub async fn export_bookmarks_handler(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,

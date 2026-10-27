@@ -9,11 +9,11 @@ use sqlx::PgPool;
 use validator::Validate;
 
 use crate::config::AppConfig;
-use crate::errors::AppError;
+use crate::errors::{AppError, ErrorResponse};
 use crate::infra::redis::create_redis_pool;
-use super::dto::{AuthUser, LoginRequest, RegisterRequest};
+use super::dto::{AuthUser, LoginRequest, RegisterRequest, SessionResponse};
 use super::middleware::{CurrentUser, SessionToken};
-use super::oauth::{OAuthAuthorizeQuery, OAuthCallbackQuery, OAuthService};
+use super::oauth::{OAuthAuthorizeQuery, OAuthCallbackQuery, OAuthService, OAuthUrlResponse};
 use super::service::AuthService;
 
 pub fn router() -> Router<PgPool> {
@@ -34,6 +34,17 @@ fn build_session_cookie(token: &str, max_age: i64) -> HeaderValue {
     HeaderValue::from_str(&cookie_val).expect("Valid cookie header")
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/auth/register",
+    request_body = RegisterRequest,
+    responses(
+        (status = 201, description = "Registration successful", body = SessionResponse),
+        (status = 400, description = "Validation error", body = ErrorResponse),
+        (status = 409, description = "Email already registered", body = ErrorResponse)
+    ),
+    tag = "auth"
+)]
 pub async fn register_handler(
     State(pool): State<PgPool>,
     headers: HeaderMap,
@@ -62,6 +73,16 @@ pub async fn register_handler(
     Ok((StatusCode::CREATED, response_headers, Json(session)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/auth/login",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = SessionResponse),
+        (status = 401, description = "Invalid credentials", body = ErrorResponse)
+    ),
+    tag = "auth"
+)]
 pub async fn login_handler(
     State(pool): State<PgPool>,
     headers: HeaderMap,
@@ -90,10 +111,31 @@ pub async fn login_handler(
     Ok((StatusCode::OK, response_headers, Json(session)))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/auth/me",
+    responses(
+        (status = 200, description = "Current authenticated user", body = AuthUser),
+        (status = 401, description = "Unauthorized", body = ErrorResponse)
+    ),
+    security(
+        ("bearer_auth" = []),
+        ("cookie_auth" = [])
+    ),
+    tag = "auth"
+)]
 pub async fn me_handler(CurrentUser(user): CurrentUser) -> Result<Json<AuthUser>, AppError> {
     Ok(Json(user))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/auth/logout",
+    responses(
+        (status = 200, description = "Logged out successfully")
+    ),
+    tag = "auth"
+)]
 pub async fn logout_handler(
     State(pool): State<PgPool>,
     SessionToken(token): SessionToken,
@@ -111,6 +153,19 @@ pub async fn logout_handler(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/auth/oauth/{provider}",
+    params(
+        ("provider" = String, Path, description = "OAuth provider: google | github"),
+        OAuthAuthorizeQuery
+    ),
+    responses(
+        (status = 200, description = "OAuth authorization URL when format=json", body = OAuthUrlResponse),
+        (status = 302, description = "Redirect to provider OAuth login")
+    ),
+    tag = "auth"
+)]
 pub async fn oauth_authorize_handler(
     State(pool): State<PgPool>,
     Path(provider): Path<String>,

@@ -19,7 +19,15 @@ pub fn router() -> Router<PgPool> {
         .route("/:id", delete(delete_tag))
 }
 
-async fn list_tags(
+#[utoipa::path(
+    get,
+    path = "/v1/tags",
+    responses(
+        (status = 200, description = "List of user tags with bookmark counts", body = Vec<TagDto>)
+    ),
+    tag = "tags"
+)]
+pub async fn list_tags(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<TagDto>>, AppError> {
@@ -28,7 +36,16 @@ async fn list_tags(
     Ok(Json(tags))
 }
 
-async fn create_tag(
+#[utoipa::path(
+    post,
+    path = "/v1/tags",
+    request_body = CreateTagRequest,
+    responses(
+        (status = 201, description = "Tag created successfully", body = TagDto)
+    ),
+    tag = "tags"
+)]
+pub async fn create_tag(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Json(payload): Json<CreateTagRequest>,
@@ -42,7 +59,18 @@ async fn create_tag(
     Ok((StatusCode::CREATED, Json(tag)))
 }
 
-async fn delete_tag(
+#[utoipa::path(
+    delete,
+    path = "/v1/tags/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Tag ID")
+    ),
+    responses(
+        (status = 204, description = "Tag deleted successfully")
+    ),
+    tag = "tags"
+)]
+pub async fn delete_tag(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(tag_id): Path<Uuid>,

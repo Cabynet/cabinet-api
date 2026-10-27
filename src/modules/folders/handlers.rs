@@ -53,7 +53,15 @@ pub fn public_share_router() -> Router<PgPool> {
     Router::new().route("/:token", get(get_public_share))
 }
 
-async fn list_folders(
+#[utoipa::path(
+    get,
+    path = "/v1/folders",
+    responses(
+        (status = 200, description = "List of user folders", body = Vec<FolderDto>)
+    ),
+    tag = "folders"
+)]
+pub async fn list_folders(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<FolderDto>>, AppError> {
@@ -62,7 +70,16 @@ async fn list_folders(
     Ok(Json(folders))
 }
 
-async fn create_folder(
+#[utoipa::path(
+    post,
+    path = "/v1/folders",
+    request_body = CreateFolderRequest,
+    responses(
+        (status = 201, description = "Folder created successfully", body = FolderDto)
+    ),
+    tag = "folders"
+)]
+pub async fn create_folder(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Json(payload): Json<CreateFolderRequest>,
@@ -76,7 +93,19 @@ async fn create_folder(
     Ok((StatusCode::CREATED, Json(folder)))
 }
 
-async fn update_folder(
+#[utoipa::path(
+    put,
+    path = "/v1/folders/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Folder ID")
+    ),
+    request_body = UpdateFolderRequest,
+    responses(
+        (status = 200, description = "Updated folder", body = FolderDto)
+    ),
+    tag = "folders"
+)]
+pub async fn update_folder(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(folder_id): Path<Uuid>,
@@ -91,7 +120,18 @@ async fn update_folder(
     Ok(Json(folder))
 }
 
-async fn delete_folder(
+#[utoipa::path(
+    delete,
+    path = "/v1/folders/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Folder ID")
+    ),
+    responses(
+        (status = 204, description = "Folder deleted successfully")
+    ),
+    tag = "folders"
+)]
+pub async fn delete_folder(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(folder_id): Path<Uuid>,
@@ -101,7 +141,18 @@ async fn delete_folder(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn enable_share(
+#[utoipa::path(
+    post,
+    path = "/v1/folders/{id}/share",
+    params(
+        ("id" = Uuid, Path, description = "Folder ID")
+    ),
+    responses(
+        (status = 200, description = "Share token generated")
+    ),
+    tag = "folders"
+)]
+pub async fn enable_share(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(folder_id): Path<Uuid>,
@@ -114,7 +165,18 @@ async fn enable_share(
     })))
 }
 
-async fn revoke_share(
+#[utoipa::path(
+    delete,
+    path = "/v1/folders/{id}/share",
+    params(
+        ("id" = Uuid, Path, description = "Folder ID")
+    ),
+    responses(
+        (status = 200, description = "Share revoked successfully")
+    ),
+    tag = "folders"
+)]
+pub async fn revoke_share(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(folder_id): Path<Uuid>,
@@ -124,6 +186,18 @@ async fn revoke_share(
     Ok(Json(serde_json::json!({ "revoked": true })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/share/{token}",
+    params(
+        ("token" = String, Path, description = "Public share token")
+    ),
+    responses(
+        (status = 200, description = "Read-only shared folder collection", body = PublicShareResponse),
+        (status = 404, description = "Shared collection not found or expired")
+    ),
+    tag = "folders"
+)]
 pub async fn get_public_share(
     State(pool): State<PgPool>,
     Path(token): Path<String>,
