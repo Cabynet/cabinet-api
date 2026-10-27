@@ -139,6 +139,67 @@
           }
         }
       },
+      "BookmarkPreviewDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "metadata_status",
+          "title"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "favicon_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "metadata_status": {
+            "type": "string"
+          },
+          "site_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "thumbnail_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "BookmarkPreviewsQuery": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "string"
+          }
+        }
+      },
+      "BookmarkPreviewsResponse": {
+        "type": "object",
+        "required": [
+          "previews"
+        ],
+        "properties": {
+          "previews": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookmarkPreviewDto"
+            }
+          }
+        }
+      },
       "BookmarkTagSummary": {
         "type": "object",
         "required": [
@@ -248,6 +309,94 @@
           }
         }
       },
+      "DuplicateCleanupResponse": {
+        "type": "object",
+        "required": [
+          "cleaned_items",
+          "message"
+        ],
+        "properties": {
+          "cleaned_items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "DuplicateGroupDto": {
+        "type": "object",
+        "required": [
+          "url",
+          "count",
+          "items"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "domain": {
+            "type": "string",
+            "nullable": true
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DuplicateItemDto"
+            }
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "DuplicateItemDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "DuplicateReportResponse": {
+        "type": "object",
+        "required": [
+          "total_duplicate_groups",
+          "total_redundant_items",
+          "groups"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DuplicateGroupDto"
+            }
+          },
+          "total_duplicate_groups": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total_redundant_items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "FolderDto": {
         "type": "object",
         "required": [
@@ -289,6 +438,31 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "LinkHealthCheckResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "link_health"
+        ],
+        "properties": {
+          "http_status_code": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "link_health": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "nullable": true
           }
         }
       },
@@ -363,6 +537,42 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "OAuthAuthorizeQuery": {
+        "type": "object",
+        "properties": {
+          "client_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "format": {
+            "type": "string",
+            "nullable": true
+          },
+          "redirect_uri": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "OAuthUrlResponse": {
+        "type": "object",
+        "required": [
+          "provider",
+          "authorization_url",
+          "state"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
           }
         }
       },
