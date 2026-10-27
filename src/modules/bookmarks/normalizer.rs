@@ -45,7 +45,7 @@ pub fn normalize_url(raw: &str) -> Result<NormalizedUrl, String> {
     parsed.set_fragment(None);
 
     let mut normalized_str = parsed.to_string();
-    if normalized_str.ends_with('/') && parsed.path() == "/" {
+    if normalized_str.ends_with('/') {
         normalized_str.pop();
     }
 

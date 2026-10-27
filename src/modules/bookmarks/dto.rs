@@ -111,3 +111,39 @@ pub struct BookmarkPreviewsQuery {
 pub struct BookmarkPreviewsResponse {
     pub previews: Vec<BookmarkPreviewDto>,
 }
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DuplicateItemDto {
+    pub id: Uuid,
+    pub title: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DuplicateGroupDto {
+    pub url: String,
+    pub domain: Option<String>,
+    pub count: usize,
+    pub items: Vec<DuplicateItemDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DuplicateReportResponse {
+    pub total_duplicate_groups: usize,
+    pub total_redundant_items: usize,
+    pub groups: Vec<DuplicateGroupDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct DuplicateCleanupResponse {
+    pub cleaned_items: usize,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct LinkHealthCheckResponse {
+    pub id: Uuid,
+    pub url: Option<String>,
+    pub link_health: String,
+    pub http_status_code: Option<i16>,
+}

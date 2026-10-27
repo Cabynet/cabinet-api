@@ -12,7 +12,8 @@ use crate::errors::AppError;
 use crate::modules::auth::middleware::CurrentUser;
 use super::dto::{
     BookmarkListItem, BookmarkListResponse, BookmarkPreviewsQuery, BookmarkPreviewsResponse,
-    CreateBookmarkRequest, ListBookmarksQuery, UpdateBookmarkRequest,
+    CreateBookmarkRequest, DuplicateCleanupResponse, DuplicateReportResponse,
+    LinkHealthCheckResponse, ListBookmarksQuery, UpdateBookmarkRequest,
 };
 use super::service::BookmarksService;
 use crate::modules::notes::handlers::{get_note_handler, update_note_handler};
@@ -21,6 +22,8 @@ pub fn router() -> Router<PgPool> {
     Router::new()
         .route("/", get(list_bookmarks).post(create_bookmark))
         .route("/previews", get(get_previews))
+        .route("/duplicates", get(get_duplicates_handler))
+        .route("/duplicates/cleanup", axum::routing::post(cleanup_duplicates_handler))
         .route("/export", get(crate::modules::tasks::handlers::export_bookmarks_handler))
         .route(
             "/:id",
@@ -28,6 +31,7 @@ pub fn router() -> Router<PgPool> {
                 .patch(update_bookmark)
                 .delete(delete_bookmark),
         )
+        .route("/:id/check-link", axum::routing::post(check_link_handler))
         .route("/:id/note", get(get_note_handler).put(update_note_handler))
 }
 
@@ -104,4 +108,32 @@ async fn delete_bookmark(
     let service = BookmarksService::new(pool, None);
     service.delete_bookmark(user.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_duplicates_handler(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<DuplicateReportResponse>, AppError> {
+    let service = BookmarksService::new(pool, None);
+    let report = service.get_duplicates(user.id).await?;
+    Ok(Json(report))
+}
+
+async fn cleanup_duplicates_handler(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<DuplicateCleanupResponse>, AppError> {
+    let service = BookmarksService::new(pool, None);
+    let res = service.cleanup_duplicates(user.id).await?;
+    Ok(Json(res))
+}
+
+async fn check_link_handler(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<LinkHealthCheckResponse>, AppError> {
+    let service = BookmarksService::new(pool, None);
+    let res = service.check_bookmark_health(user.id, id).await?;
+    Ok(Json(res))
 }

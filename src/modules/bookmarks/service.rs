@@ -4,10 +4,12 @@ use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
 use crate::errors::AppError;
+use crate::infra::http_client::SsrfSafeClient;
 use crate::worker::queue::{EnrichmentJob, QUEUE_INTERACTIVE};
 use super::dto::{
     BookmarkCursor, BookmarkListItem, BookmarkListResponse, BookmarkPreviewDto, BookmarkTagSummary,
-    CreateBookmarkRequest, ListBookmarksQuery, UpdateBookmarkRequest,
+    CreateBookmarkRequest, DuplicateCleanupResponse, DuplicateGroupDto, DuplicateItemDto,
+    DuplicateReportResponse, LinkHealthCheckResponse, ListBookmarksQuery, UpdateBookmarkRequest,
 };
 use super::normalizer::normalize_url;
 use crate::modules::tags::service::slugify;
@@ -614,5 +616,170 @@ impl BookmarksService {
             .collect();
 
         Ok(previews)
+    }
+
+    pub async fn get_duplicates(
+        &self,
+        user_id: Uuid,
+    ) -> Result<DuplicateReportResponse, AppError> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                Option<String>,
+                Option<String>,
+                String,
+                DateTime<Utc>,
+                Option<Vec<u8>>,
+            ),
+        >(
+            r#"
+            WITH dup_hashes AS (
+                SELECT url_hash
+                FROM bookmarks
+                WHERE user_id = $1 AND deleted_at IS NULL AND url_hash IS NOT NULL
+                GROUP BY url_hash
+                HAVING COUNT(*) > 1
+            )
+            SELECT b.id, b.raw_url, b.normalized_domain, b.title, b.created_at, b.url_hash
+            FROM bookmarks b
+            JOIN dup_hashes dh ON b.url_hash = dh.url_hash
+            WHERE b.user_id = $1 AND b.deleted_at IS NULL
+            ORDER BY b.url_hash, b.created_at ASC, b.id ASC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut groups_map: std::collections::HashMap<Vec<u8>, DuplicateGroupDto> =
+            std::collections::HashMap::new();
+
+        for (id, raw_url, domain, title, created_at, url_hash) in rows {
+            if let Some(hash) = url_hash {
+                let entry = groups_map.entry(hash).or_insert_with(|| DuplicateGroupDto {
+                    url: raw_url.unwrap_or_default(),
+                    domain,
+                    count: 0,
+                    items: Vec::new(),
+                });
+                entry.count += 1;
+                entry.items.push(DuplicateItemDto {
+                    id,
+                    title,
+                    created_at,
+                });
+            }
+        }
+
+        let mut groups: Vec<DuplicateGroupDto> = groups_map.into_values().collect();
+        groups.sort_by(|a, b| b.count.cmp(&a.count));
+
+        let total_duplicate_groups = groups.len();
+        let total_redundant_items = groups
+            .iter()
+            .map(|g| g.count.saturating_sub(1))
+            .sum();
+
+        Ok(DuplicateReportResponse {
+            total_duplicate_groups,
+            total_redundant_items,
+            groups,
+        })
+    }
+
+    pub async fn cleanup_duplicates(
+        &self,
+        user_id: Uuid,
+    ) -> Result<DuplicateCleanupResponse, AppError> {
+        // Keeps the earliest/oldest record per url_hash, soft-deletes redundant ones
+        let res = sqlx::query(
+            r#"
+            WITH ranked AS (
+                SELECT id,
+                       ROW_NUMBER() OVER(PARTITION BY url_hash ORDER BY created_at ASC, id ASC) as rn
+                FROM bookmarks
+                WHERE user_id = $1 AND deleted_at IS NULL AND url_hash IS NOT NULL
+            )
+            UPDATE bookmarks
+            SET deleted_at = NOW(), updated_at = NOW()
+            WHERE id IN (
+                SELECT id FROM ranked WHERE rn > 1
+            ) AND user_id = $1
+            "#,
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        let cleaned_items = res.rows_affected() as usize;
+
+        Ok(DuplicateCleanupResponse {
+            cleaned_items,
+            message: format!("Successfully cleaned up {} duplicate bookmarks", cleaned_items),
+        })
+    }
+
+    pub async fn check_bookmark_health(
+        &self,
+        user_id: Uuid,
+        bookmark_id: Uuid,
+    ) -> Result<LinkHealthCheckResponse, AppError> {
+        let row = sqlx::query_as::<_, (Option<String>,)>(
+            "SELECT raw_url FROM bookmarks WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+        )
+        .bind(bookmark_id)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Bookmark not found".to_string()))?;
+
+        let raw_url = match row.0 {
+            Some(u) if !u.trim().is_empty() => u,
+            _ => {
+                return Ok(LinkHealthCheckResponse {
+                    id: bookmark_id,
+                    url: None,
+                    link_health: "OK".to_string(),
+                    http_status_code: None,
+                });
+            }
+        };
+
+        let client = SsrfSafeClient::new()?;
+        let (health, status_code) = match client.get_safe(&raw_url).await {
+            Ok(resp) => {
+                let code = resp.status().as_u16() as i16;
+                if resp.status().is_success() {
+                    ("OK".to_string(), Some(code))
+                } else if resp.status().is_redirection() {
+                    ("REDIRECT".to_string(), Some(code))
+                } else {
+                    ("BROKEN".to_string(), Some(code))
+                }
+            }
+            Err(_) => ("BROKEN".to_string(), None),
+        };
+
+        sqlx::query(
+            r#"
+            UPDATE bookmarks
+            SET link_health = $2, http_status_code = $3, last_checked_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND user_id = $4
+            "#,
+        )
+        .bind(bookmark_id)
+        .bind(&health)
+        .bind(status_code)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(LinkHealthCheckResponse {
+            id: bookmark_id,
+            url: Some(raw_url),
+            link_health: health,
+            http_status_code: status_code,
+        })
     }
 }
