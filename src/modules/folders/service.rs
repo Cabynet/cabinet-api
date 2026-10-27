@@ -54,8 +54,9 @@ impl FoldersService {
         user_id: Uuid,
         req: CreateFolderRequest,
     ) -> Result<FolderDto, AppError> {
+        let req = req.resolved();
         let folder_id = Uuid::now_v7();
-        let name = req.name.trim().to_string();
+        let name = req.name.unwrap_or_else(|| "Untitled Folder".to_string()).trim().to_string();
 
         if let Some(parent_id) = req.parent_id {
             let parent_exists = sqlx::query_scalar::<_, i64>(
@@ -114,6 +115,7 @@ impl FoldersService {
         folder_id: Uuid,
         req: UpdateFolderRequest,
     ) -> Result<FolderDto, AppError> {
+        let req = req.resolved();
         let row = sqlx::query_as::<_, (Uuid, String, Option<String>, Option<Uuid>, i32, Option<Vec<u8>>, chrono::DateTime<Utc>, chrono::DateTime<Utc>)>(
             r#"
             UPDATE folders

@@ -30,6 +30,7 @@ impl BookmarksService {
         user_id: Uuid,
         req: CreateBookmarkRequest,
     ) -> Result<BookmarkListItem, AppError> {
+        let req = req.resolved();
         let (raw_url, normalized_url, url_hash, normalized_domain) = match &req.url {
             Some(u) if !u.trim().is_empty() => {
                 let norm = normalize_url(u).map_err(AppError::BadRequest)?;
@@ -451,6 +452,7 @@ impl BookmarksService {
         bookmark_id: Uuid,
         req: UpdateBookmarkRequest,
     ) -> Result<BookmarkListItem, AppError> {
+        let req = req.resolved();
         let user_edited_title = req.title.is_some();
         let user_edited_desc = req.description.is_some();
 

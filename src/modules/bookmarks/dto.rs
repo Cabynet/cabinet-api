@@ -4,26 +4,92 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
-#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Validate, Clone, ToSchema)]
 pub struct CreateBookmarkRequest {
     pub url: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub folder_id: Option<Uuid>,
+    #[serde(rename = "folderId")]
+    pub folder_id_camel: Option<Uuid>,
     pub item_type: Option<String>,
+    #[serde(rename = "type")]
+    pub item_type_alias: Option<String>,
     pub client_request_id: Option<Uuid>,
+    #[serde(rename = "clientRequestId")]
+    pub client_request_id_camel: Option<Uuid>,
     pub tags: Option<Vec<String>>,
+    pub data: Option<Box<CreateBookmarkRequest>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
+impl CreateBookmarkRequest {
+    pub fn resolved(self) -> Self {
+        if let Some(inner) = self.data {
+            return inner.resolved();
+        }
+        let folder_id = self.folder_id.or(self.folder_id_camel);
+        let item_type = self.item_type.or(self.item_type_alias);
+        let client_request_id = self.client_request_id.or(self.client_request_id_camel);
+        Self {
+            url: self.url,
+            title: self.title,
+            description: self.description,
+            folder_id,
+            folder_id_camel: folder_id,
+            item_type: item_type.clone(),
+            item_type_alias: item_type,
+            client_request_id,
+            client_request_id_camel: client_request_id,
+            tags: self.tags,
+            data: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Validate, Clone, ToSchema)]
 pub struct UpdateBookmarkRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub folder_id: Option<Uuid>,
+    #[serde(rename = "folderId")]
+    pub folder_id_camel: Option<Uuid>,
     pub is_pinned: Option<bool>,
+    #[serde(rename = "isPinned")]
+    pub is_pinned_camel: Option<bool>,
     pub is_favorite: Option<bool>,
+    #[serde(rename = "isFavorite")]
+    pub is_favorite_camel: Option<bool>,
     pub is_archived: Option<bool>,
+    #[serde(rename = "isArchived")]
+    pub is_archived_camel: Option<bool>,
     pub tags: Option<Vec<String>>,
+    pub data: Option<Box<UpdateBookmarkRequest>>,
+}
+
+impl UpdateBookmarkRequest {
+    pub fn resolved(self) -> Self {
+        if let Some(inner) = self.data {
+            return inner.resolved();
+        }
+        let folder_id = self.folder_id.or(self.folder_id_camel);
+        let is_pinned = self.is_pinned.or(self.is_pinned_camel);
+        let is_favorite = self.is_favorite.or(self.is_favorite_camel);
+        let is_archived = self.is_archived.or(self.is_archived_camel);
+        Self {
+            title: self.title,
+            description: self.description,
+            folder_id,
+            folder_id_camel: folder_id,
+            is_pinned,
+            is_pinned_camel: is_pinned,
+            is_favorite,
+            is_favorite_camel: is_favorite,
+            is_archived,
+            is_archived_camel: is_archived,
+            tags: self.tags,
+            data: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
