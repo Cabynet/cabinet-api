@@ -122,7 +122,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .nest("/share", modules::folders::handlers::public_share_router())
         .with_state(pool.clone());
 
-    let app = Router::new()
+    let app_routes = Router::new()
         .merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", ApiDoc::openapi()))
         .route("/v1/health", get(|| async {
             Json(serde_json::json!({
@@ -131,9 +131,22 @@ async fn main() -> Result<(), anyhow::Error> {
                 "version": env!("CARGO_PKG_VERSION")
             }))
         }))
-        .nest("/v1", api_routes)
-        .layer(cors)
-        .layer(TraceLayer::new_for_http());
+        .nest("/v1", api_routes);
+
+    let app = if let Ok(redis_conn) = redis_res {
+        app_routes.layer(axum::middleware::from_fn(move |req, next| {
+            cabinet_api::infra::rate_limit::rate_limit_middleware(
+                redis_conn.clone(),
+                cabinet_api::infra::rate_limit::RateLimitConfig::GENERAL,
+                req,
+                next,
+            )
+        }))
+    } else {
+        app_routes
+    };
+
+    let app = app.layer(cors).layer(TraceLayer::new_for_http());
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!("Server listening on http://{}", addr);
