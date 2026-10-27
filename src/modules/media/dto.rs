@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
+use validator::Validate;
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, Validate, ToSchema)]
 pub struct PresignUploadRequest {
+    #[validate(length(min = 1, max = 255, message = "Filename must be between 1 and 255 characters"))]
     pub filename: String,
     pub mime_type: String,
     pub size_bytes: i64,
