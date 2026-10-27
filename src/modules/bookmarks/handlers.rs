@@ -21,6 +21,7 @@ pub fn router() -> Router<PgPool> {
     Router::new()
         .route("/", get(list_bookmarks).post(create_bookmark))
         .route("/previews", get(get_previews))
+        .route("/export", get(crate::modules::tasks::handlers::export_bookmarks_handler))
         .route(
             "/:id",
             get(get_bookmark)
