@@ -15,6 +15,7 @@ use super::dto::{
     UpdateBookmarkRequest,
 };
 use super::service::BookmarksService;
+use crate::modules::notes::handlers::{get_note_handler, update_note_handler};
 
 pub fn router() -> Router<PgPool> {
     Router::new()
@@ -25,6 +26,7 @@ pub fn router() -> Router<PgPool> {
                 .patch(update_bookmark)
                 .delete(delete_bookmark),
         )
+        .route("/:id/note", get(get_note_handler).put(update_note_handler))
 }
 
 async fn list_bookmarks(

@@ -1,6 +1,37 @@
-use axum::{routing::get, Router};
+use axum::{
+    extract::{Path, State},
+    routing::get,
+    Json, Router,
+};
 use sqlx::PgPool;
+use uuid::Uuid;
+
+use crate::errors::AppError;
+use crate::modules::auth::middleware::CurrentUser;
+use super::dto::{NoteResponse, UpdateNoteRequest};
+use super::service::NotesService;
 
 pub fn router() -> Router<PgPool> {
-    Router::new().route("/", get(|| async { "notes" }))
+    Router::new().route("/:id", get(get_note_handler).put(update_note_handler))
+}
+
+pub async fn get_note_handler(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<NoteResponse>, AppError> {
+    let service = NotesService::new(pool);
+    let note = service.get_note(user.id, id).await?;
+    Ok(Json(note))
+}
+
+pub async fn update_note_handler(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateNoteRequest>,
+) -> Result<Json<NoteResponse>, AppError> {
+    let service = NotesService::new(pool);
+    let note = service.update_note(user.id, id, payload).await?;
+    Ok(Json(note))
 }
