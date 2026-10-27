@@ -43,6 +43,11 @@ async fn main() -> Result<(), anyhow::Error> {
     let pool = match create_db_pool(&config).await {
         Ok(p) => {
             tracing::info!("PostgreSQL connection established successfully");
+            if let Err(e) = sqlx::migrate!("./migrations").run(&p).await {
+                tracing::warn!("Migration error: {}. Continuing...", e);
+            } else {
+                tracing::info!("Database migrations applied successfully");
+            }
             p
         }
         Err(e) => {
