@@ -74,7 +74,11 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let redis_res = create_redis_pool(&config).await;
     match redis_res {
-        Ok(_) => tracing::info!("Redis connection established successfully"),
+        Ok(ref conn) => {
+            tracing::info!("Redis connection established successfully");
+            cabinet_api::worker::spawn_worker_loop(pool.clone(), conn.clone());
+            tracing::info!("Tokio background worker loop spawned and listening to Redis queues");
+        }
         Err(ref e) => tracing::warn!("Redis connection skipped or offline: {}", e),
     }
 
@@ -119,6 +123,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .nest("/media", modules::media::handlers::router())
         .nest("/search", modules::search::handlers::router())
         .nest("/tasks", modules::tasks::handlers::router())
+        .nest("/users", modules::users::handlers::router())
         .nest("/share", modules::folders::handlers::public_share_router())
         .with_state(pool.clone());
 

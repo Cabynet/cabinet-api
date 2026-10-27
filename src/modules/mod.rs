@@ -6,3 +6,4 @@ pub mod notes;
 pub mod media;
 pub mod search;
 pub mod tasks;
+pub mod users;

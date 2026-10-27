@@ -41,6 +41,9 @@ use utoipa::OpenApi;
         crate::modules::tasks::handlers::get_task_status_handler,
         crate::modules::tasks::handlers::import_html_handler,
         crate::modules::tasks::handlers::export_bookmarks_handler,
+        crate::modules::users::handlers::update_profile_handler,
+        crate::modules::users::handlers::change_password_handler,
+        crate::modules::users::handlers::delete_account_handler,
     ),
     components(
         schemas(
@@ -82,6 +85,9 @@ use utoipa::OpenApi;
             crate::modules::search::dto::SearchResultItem,
             crate::modules::search::dto::SearchResponse,
             crate::modules::tasks::dto::TaskStatusDto,
+            crate::modules::users::dto::UpdateUserRequest,
+            crate::modules::users::dto::ChangePasswordRequest,
+            crate::modules::users::dto::UserActionResponse,
             crate::errors::ErrorResponse,
             crate::errors::ErrorDetails,
         )
@@ -94,7 +100,8 @@ use utoipa::OpenApi;
         (name = "notes", description = "Note editor autosave & conflict prevention"),
         (name = "media", description = "Cloudflare R2 Direct Uploads"),
         (name = "search", description = "PostgreSQL Full-Text & Trigram search"),
-        (name = "tasks", description = "Background task tracking")
+        (name = "tasks", description = "Background task tracking"),
+        (name = "users", description = "User profile and account management")
     )
 )]
 pub struct ApiDoc;
