@@ -10,6 +10,13 @@ pub struct AppConfig {
     pub frontend_url: String,
     pub cookie_domain: Option<String>,
     pub max_db_connections: u32,
+    pub api_url: String,
+
+    // OAuth
+    pub google_client_id: String,
+    pub google_client_secret: String,
+    pub github_client_id: String,
+    pub github_client_secret: String,
 
     // Cloudflare R2
     pub r2_account_id: String,
@@ -46,6 +53,12 @@ impl AppConfig {
             .unwrap_or_else(|_| "http://localhost:3000".to_string());
 
         let cookie_domain = env::var("COOKIE_DOMAIN").ok().filter(|s| !s.is_empty());
+        let api_url = env::var("API_URL").unwrap_or_else(|_| "http://localhost:4000".to_string());
+
+        let google_client_id = env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
+        let google_client_secret = env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
+        let github_client_id = env::var("GITHUB_CLIENT_ID").unwrap_or_default();
+        let github_client_secret = env::var("GITHUB_CLIENT_SECRET").unwrap_or_default();
 
         // Tuned for VPS 2GB RAM: Keep pool connections conservative
         let max_db_connections = env::var("MAX_DB_CONNECTIONS")
@@ -79,6 +92,11 @@ impl AppConfig {
             frontend_url,
             cookie_domain,
             max_db_connections,
+            api_url,
+            google_client_id,
+            google_client_secret,
+            github_client_id,
+            github_client_secret,
             r2_account_id,
             r2_access_key_id,
             r2_secret_access_key,

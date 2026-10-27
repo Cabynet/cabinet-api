@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -8,9 +8,12 @@ use axum::{
 use sqlx::PgPool;
 use validator::Validate;
 
+use crate::config::AppConfig;
 use crate::errors::AppError;
+use crate::infra::redis::create_redis_pool;
 use super::dto::{AuthUser, LoginRequest, RegisterRequest};
 use super::middleware::{CurrentUser, SessionToken};
+use super::oauth::{OAuthAuthorizeQuery, OAuthCallbackQuery, OAuthService};
 use super::service::AuthService;
 
 pub fn router() -> Router<PgPool> {
@@ -19,6 +22,8 @@ pub fn router() -> Router<PgPool> {
         .route("/login", post(login_handler))
         .route("/me", get(me_handler))
         .route("/logout", post(logout_handler))
+        .route("/oauth/:provider", get(oauth_authorize_handler))
+        .route("/callback/:provider", get(oauth_callback_handler))
 }
 
 fn build_session_cookie(token: &str, max_age: i64) -> HeaderValue {
@@ -104,4 +109,54 @@ pub async fn logout_handler(
         response_headers,
         Json(serde_json::json!({ "success": true })),
     ))
+}
+
+pub async fn oauth_authorize_handler(
+    State(pool): State<PgPool>,
+    Path(provider): Path<String>,
+    Query(query): Query<OAuthAuthorizeQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let config = AppConfig::from_env().map_err(AppError::Internal)?;
+    let redis = create_redis_pool(&config).await.ok();
+    let mut oauth_service = OAuthService::new(pool, redis, config);
+
+    let want_json = query.format.as_deref() == Some("json");
+    let res = oauth_service.get_authorization_url(&provider, query).await?;
+
+    if want_json {
+        Ok((StatusCode::OK, HeaderMap::new(), Json(serde_json::to_value(res).unwrap())).into_response())
+    } else {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            HeaderValue::from_str(&res.authorization_url)
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("Invalid redirect URL: {}", e)))?,
+        );
+        Ok((StatusCode::FOUND, headers, ()).into_response())
+    }
+}
+
+pub async fn oauth_callback_handler(
+    State(pool): State<PgPool>,
+    Path(provider): Path<String>,
+    Query(query): Query<OAuthCallbackQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let config = AppConfig::from_env().map_err(AppError::Internal)?;
+    let redis = create_redis_pool(&config).await.ok();
+    let mut oauth_service = OAuthService::new(pool, redis, config);
+
+    let (session, destination_url) = oauth_service.handle_callback(&provider, query).await?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::SET_COOKIE,
+        build_session_cookie(&session.token, 2592000),
+    );
+    headers.insert(
+        header::LOCATION,
+        HeaderValue::from_str(&destination_url)
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Invalid destination redirect: {}", e)))?,
+    );
+
+    Ok((StatusCode::FOUND, headers, ()))
 }

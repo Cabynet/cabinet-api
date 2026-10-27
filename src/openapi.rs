@@ -13,6 +13,8 @@ use utoipa::OpenApi;
             crate::modules::auth::dto::RegisterRequest,
             crate::modules::auth::dto::LoginRequest,
             crate::modules::auth::dto::SessionResponse,
+            crate::modules::auth::oauth::OAuthAuthorizeQuery,
+            crate::modules::auth::oauth::OAuthUrlResponse,
             crate::modules::bookmarks::dto::CreateBookmarkRequest,
             crate::modules::bookmarks::dto::UpdateBookmarkRequest,
             crate::modules::bookmarks::dto::BookmarkListItem,
