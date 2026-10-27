@@ -22,8 +22,50 @@ pub fn router() -> Router<PgPool> {
         .route("/login", post(login_handler))
         .route("/me", get(me_handler))
         .route("/logout", post(logout_handler))
+        .route("/sign-in/social", post(sign_in_social_handler))
         .route("/oauth/:provider", get(oauth_authorize_handler))
         .route("/callback/:provider", get(oauth_callback_handler))
+}
+
+#[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+pub struct SignInSocialRequest {
+    pub provider: String,
+    pub callback_url: Option<String>,
+    #[serde(rename = "callbackURL")]
+    pub callback_url_camel: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/auth/sign-in/social",
+    request_body = SignInSocialRequest,
+    responses(
+        (status = 200, description = "OAuth authorization URL", body = serde_json::Value)
+    ),
+    tag = "auth"
+)]
+pub async fn sign_in_social_handler(
+    State(pool): State<PgPool>,
+    Json(payload): Json<SignInSocialRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let config = AppConfig::from_env().map_err(AppError::Internal)?;
+    let redis = create_redis_pool(&config).await.ok();
+    let mut oauth_service = OAuthService::new(pool, redis, config);
+
+    let redirect_uri = payload.callback_url_camel.or(payload.callback_url);
+
+    let query = OAuthAuthorizeQuery {
+        client_type: Some("WEB".to_string()),
+        redirect_uri,
+        format: Some("json".to_string()),
+    };
+
+    let res = oauth_service.get_authorization_url(&payload.provider, query).await?;
+
+    Ok(Json(serde_json::json!({
+        "url": res.authorization_url,
+        "redirect": false
+    })))
 }
 
 fn build_session_cookie(token: &str, max_age: i64) -> HeaderValue {
