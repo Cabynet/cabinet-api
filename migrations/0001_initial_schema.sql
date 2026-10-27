@@ -4,7 +4,7 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- 1. Users
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
@@ -18,7 +18,7 @@ CREATE TABLE users (
 );
 
 -- 2. Auth Sessions (Dual Auth: Cookie Web & Bearer Mobile/Ext)
-CREATE TABLE auth_sessions (
+CREATE TABLE IF NOT EXISTS auth_sessions (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_hash BYTEA NOT NULL UNIQUE,
@@ -30,10 +30,10 @@ CREATE TABLE auth_sessions (
     last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_auth_sessions_user ON auth_sessions(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, expires_at);
 
 -- 3. Folders (Adjacency List + Public Share)
-CREATE TABLE folders (
+CREATE TABLE IF NOT EXISTS folders (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     parent_id UUID REFERENCES folders(id) ON DELETE CASCADE,
@@ -46,10 +46,10 @@ CREATE TABLE folders (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_folders_user ON folders(user_id, parent_id, position);
+CREATE INDEX IF NOT EXISTS idx_folders_user ON folders(user_id, parent_id, position);
 
 -- 4. Bookmarks & Notes
-CREATE TABLE bookmarks (
+CREATE TABLE IF NOT EXISTS bookmarks (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     folder_id UUID REFERENCES folders(id) ON DELETE SET NULL,
@@ -103,37 +103,37 @@ CREATE TABLE bookmarks (
 );
 
 -- Partial Composite Indexes for Bookmarks
-CREATE INDEX idx_bookmarks_main_feed
+CREATE INDEX IF NOT EXISTS idx_bookmarks_main_feed
     ON bookmarks (user_id, is_archived, is_pinned DESC, created_at DESC, id DESC)
     WHERE deleted_at IS NULL;
 
-CREATE INDEX idx_bookmarks_folder_feed
+CREATE INDEX IF NOT EXISTS idx_bookmarks_folder_feed
     ON bookmarks (user_id, folder_id, is_pinned DESC, position ASC, created_at DESC, id DESC)
     WHERE deleted_at IS NULL;
 
-CREATE INDEX idx_bookmarks_favorites
+CREATE INDEX IF NOT EXISTS idx_bookmarks_favorites
     ON bookmarks (user_id, created_at DESC, id DESC)
     WHERE deleted_at IS NULL AND is_favorite = TRUE;
 
-CREATE INDEX idx_bookmarks_domain
+CREATE INDEX IF NOT EXISTS idx_bookmarks_domain
     ON bookmarks (user_id, normalized_domain, created_at DESC)
     WHERE deleted_at IS NULL AND normalized_domain IS NOT NULL;
 
-CREATE INDEX idx_bookmarks_url_hash
+CREATE INDEX IF NOT EXISTS idx_bookmarks_url_hash
     ON bookmarks (user_id, url_hash)
     WHERE deleted_at IS NULL AND url_hash IS NOT NULL;
 
 -- Full-Text & Trigram Search Indexes
-CREATE INDEX idx_bookmarks_search_vector
+CREATE INDEX IF NOT EXISTS idx_bookmarks_search_vector
     ON bookmarks USING GIN (search_vector)
     WHERE deleted_at IS NULL;
 
-CREATE INDEX idx_bookmarks_title_trgm
+CREATE INDEX IF NOT EXISTS idx_bookmarks_title_trgm
     ON bookmarks USING GIN (title gin_trgm_ops)
     WHERE deleted_at IS NULL;
 
 -- 5. Tags & Tag Junction
-CREATE TABLE tags (
+CREATE TABLE IF NOT EXISTS tags (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     slug VARCHAR(64) NOT NULL,
@@ -142,16 +142,16 @@ CREATE TABLE tags (
     CONSTRAINT uq_user_tag_slug UNIQUE (user_id, slug)
 );
 
-CREATE TABLE bookmark_tags (
+CREATE TABLE IF NOT EXISTS bookmark_tags (
     bookmark_id UUID NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
     tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (bookmark_id, tag_id)
 );
 
-CREATE INDEX idx_bookmark_tags_reverse ON bookmark_tags (tag_id, bookmark_id);
+CREATE INDEX IF NOT EXISTS idx_bookmark_tags_reverse ON bookmark_tags (tag_id, bookmark_id);
 
 -- 6. Media Assets (Cloudflare R2 Tracking)
-CREATE TABLE media_assets (
+CREATE TABLE IF NOT EXISTS media_assets (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     bookmark_id UUID REFERENCES bookmarks(id) ON DELETE SET NULL,
@@ -162,10 +162,10 @@ CREATE TABLE media_assets (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_media_assets_user ON media_assets (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_media_assets_user ON media_assets (user_id, status);
 
 -- 7. Background Tasks
-CREATE TABLE background_tasks (
+CREATE TABLE IF NOT EXISTS background_tasks (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     kind VARCHAR(24) NOT NULL,
@@ -178,7 +178,7 @@ CREATE TABLE background_tasks (
     finished_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_background_tasks_user ON background_tasks (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_background_tasks_user ON background_tasks (user_id, created_at DESC);
 
 -- 8. Trigger for Search Vector Generation
 CREATE OR REPLACE FUNCTION bookmarks_search_vector_update() RETURNS trigger AS $$
@@ -191,6 +191,7 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_bookmarks_search_vector_update ON bookmarks;
 CREATE TRIGGER trg_bookmarks_search_vector_update
 BEFORE INSERT OR UPDATE OF title, description, notes_plain, normalized_domain, raw_url
 ON bookmarks

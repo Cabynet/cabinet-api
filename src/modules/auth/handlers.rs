@@ -9,11 +9,11 @@ use sqlx::PgPool;
 use validator::Validate;
 
 use crate::config::AppConfig;
-use crate::errors::{AppError, ErrorResponse};
+use crate::errors::AppError;
 use crate::infra::redis::create_redis_pool;
-use super::dto::{AuthUser, LoginRequest, RegisterRequest, SessionResponse};
+use super::dto::{AuthUser, LoginRequest, RegisterRequest};
 use super::middleware::{CurrentUser, SessionToken};
-use super::oauth::{OAuthAuthorizeQuery, OAuthCallbackQuery, OAuthService, OAuthUrlResponse};
+use super::oauth::{OAuthAuthorizeQuery, OAuthCallbackQuery, OAuthService};
 use super::service::AuthService;
 
 pub fn router() -> Router<PgPool> {

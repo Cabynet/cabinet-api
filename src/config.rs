@@ -41,7 +41,7 @@ impl AppConfig {
             .parse::<u16>()?;
 
         let database_url = env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql://postgres:postgrespassword@localhost:5432/atlas?schema=public".to_string());
+            .unwrap_or_else(|_| "postgresql://postgres:postgrespassword@localhost:5432/cabinet?schema=public".to_string());
 
         let redis_url = env::var("REDIS_URL")
             .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());

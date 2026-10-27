@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::errors::AppError;
 use crate::modules::auth::middleware::CurrentUser;
-use super::dto::{NoteConflictError, NoteResponse, UpdateNoteRequest};
+use super::dto::{NoteResponse, UpdateNoteRequest};
 use super::service::NotesService;
 
 pub fn router() -> Router<PgPool> {
@@ -45,7 +45,7 @@ pub async fn get_note_handler(
     request_body = UpdateNoteRequest,
     responses(
         (status = 200, description = "Note updated successfully", body = NoteResponse),
-        (status = 409, description = "Conflict: note was modified by another session", body = NoteConflictError)
+        (status = 409, description = "Conflict: note was modified by another session", body = crate::modules::notes::dto::NoteConflictError)
     ),
     tag = "notes"
 )]
