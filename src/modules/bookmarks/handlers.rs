@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::IntoResponse,
     routing::get,
     Json, Router,
 };
@@ -9,6 +10,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 use crate::errors::AppError;
+use crate::infra::http_client::SsrfSafeClient;
 use crate::modules::auth::middleware::CurrentUser;
 use super::dto::{
     BookmarkListItem, BookmarkListResponse, BookmarkPreviewsQuery, BookmarkPreviewsResponse,
@@ -22,6 +24,7 @@ pub fn router() -> Router<PgPool> {
     Router::new()
         .route("/", get(list_bookmarks).post(create_bookmark))
         .route("/previews", get(get_previews))
+        .route("/proxy-image", get(proxy_image_handler))
         .route("/duplicates", get(get_duplicates_handler))
         .route("/duplicates/cleanup", axum::routing::post(cleanup_duplicates_handler))
         .route("/export", get(crate::modules::tasks::handlers::export_bookmarks_handler))
@@ -97,7 +100,14 @@ pub async fn create_bookmark(
         .validate()
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
-    let service = BookmarksService::new(pool, None);
+    let config = crate::config::AppConfig::from_env().ok();
+    let redis = if let Some(ref cfg) = config {
+        crate::infra::redis::create_redis_pool(cfg).await.ok()
+    } else {
+        None
+    };
+
+    let service = BookmarksService::new(pool, redis);
     let item = service.create_bookmark(user.id, payload).await?;
     Ok((StatusCode::CREATED, Json(item)))
 }
@@ -224,4 +234,50 @@ pub async fn check_link_handler(
     let service = BookmarksService::new(pool, None);
     let res = service.check_bookmark_health(user.id, id).await?;
     Ok(Json(res))
+}
+
+#[derive(serde::Deserialize, utoipa::IntoParams)]
+pub struct ProxyImageQuery {
+    pub url: String,
+    pub v: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/bookmarks/proxy-image",
+    params(ProxyImageQuery),
+    responses(
+        (status = 200, description = "Proxied image binary")
+    ),
+    tag = "bookmarks"
+)]
+pub async fn proxy_image_handler(
+    Query(query): Query<ProxyImageQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let client = SsrfSafeClient::new()?;
+    let resp = client.get_safe(&query.url).await?;
+
+    let content_type = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("image/jpeg")
+        .to_string();
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type).unwrap_or(HeaderValue::from_static("image/jpeg")),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=86400, immutable"),
+    );
+
+    Ok((StatusCode::OK, headers, bytes))
 }

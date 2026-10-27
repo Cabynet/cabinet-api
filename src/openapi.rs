@@ -17,6 +17,7 @@ use utoipa::OpenApi;
         crate::modules::bookmarks::handlers::list_bookmarks,
         crate::modules::bookmarks::handlers::create_bookmark,
         crate::modules::bookmarks::handlers::get_previews,
+        crate::modules::bookmarks::handlers::proxy_image_handler,
         crate::modules::bookmarks::handlers::get_duplicates_handler,
         crate::modules::bookmarks::handlers::cleanup_duplicates_handler,
         crate::modules::bookmarks::handlers::get_bookmark,

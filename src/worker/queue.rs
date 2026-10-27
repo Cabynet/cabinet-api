@@ -176,6 +176,40 @@ pub fn spawn_worker_loop(
 
         info!("Background worker loop started listening to Redis queues");
 
+        // Startup recovery: enqueue any existing PENDING bookmarks into Redis
+        let pending_res = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Vec<u8>>)>(
+            r#"
+            SELECT id, user_id, raw_url, url_hash
+            FROM bookmarks
+            WHERE metadata_status = 'PENDING' AND raw_url IS NOT NULL AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT 500
+            "#,
+        )
+        .fetch_all(&processor.pool)
+        .await;
+
+        if let Ok(rows) = pending_res {
+            if !rows.is_empty() {
+                info!("Startup recovery: found {} pending bookmarks, enqueuing to Redis", rows.len());
+                for (id, user_id, raw_url, url_hash) in rows {
+                    if let (Some(u), Some(h)) = (raw_url, url_hash) {
+                        let job = EnrichmentJob {
+                            bookmark_id: id,
+                            user_id,
+                            url: u,
+                            url_hash: h,
+                            attempt: 0,
+                        };
+                        if let Ok(job_str) = serde_json::to_string(&job) {
+                            let _: Result<(), redis::RedisError> =
+                                processor.redis.lpush(QUEUE_INTERACTIVE, job_str).await;
+                        }
+                    }
+                }
+            }
+        }
+
         loop {
             let processed = processor.poll_and_process_one().await;
             if !processed {
