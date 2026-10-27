@@ -3,6 +3,13 @@ name = "cabinet-api"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "cabinet-api"
+path = "src/main.rs"
+
 [dependencies]
 # Web framework & async runtime
 axum = { version = "0.7.9", features = ["macros", "multipart"] }

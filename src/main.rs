@@ -12,15 +12,10 @@ use tower_http::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod config;
-mod errors;
-mod infra;
-mod modules;
-mod worker;
-
-use config::AppConfig;
-use infra::db::create_db_pool;
-use infra::redis::create_redis_pool;
+use cabinet_api::config::AppConfig;
+use cabinet_api::infra::db::create_db_pool;
+use cabinet_api::infra::redis::create_redis_pool;
+use cabinet_api::modules;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {

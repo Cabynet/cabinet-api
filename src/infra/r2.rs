@@ -47,7 +47,7 @@ impl R2Service {
     pub fn generate_presigned_put_url(
         &self,
         object_key: &str,
-        content_type: &str,
+        _content_type: &str,
         expires_seconds: u64,
     ) -> Result<String, AppError> {
         if self.access_key_id.is_empty() || self.secret_access_key.is_empty() {
