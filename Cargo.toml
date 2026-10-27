@@ -24,8 +24,7 @@ sqlx = { version = "0.8.2", default-features = false, features = [
     "uuid",
     "chrono",
     "json",
-    "migrate",
-    "macros"
+    "migrate"
 ] }
 
 # Redis & Caching
@@ -69,7 +68,6 @@ validator = { version = "0.18.1", features = ["derive"] }
 
 [profile.release]
 opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
+
+[profile.release.build-override]
+opt-level = 0

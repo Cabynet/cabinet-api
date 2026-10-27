@@ -62,6 +62,9 @@ impl BookmarksService {
         let bookmark_id = Uuid::now_v7();
         let client_req_id = req.client_request_id.unwrap_or_else(Uuid::now_v7);
 
+        let user_edited_title = req.title.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+        let user_edited_desc = req.description.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+
         let row = sqlx::query_as::<
             _,
             (
@@ -86,9 +89,9 @@ impl BookmarksService {
             r#"
             INSERT INTO bookmarks (
                 id, user_id, folder_id, item_type, raw_url, normalized_url, url_hash, normalized_domain,
-                title, description, client_request_id, source, metadata_status, created_at, updated_at
+                title, user_edited_title, description, user_edited_desc, client_request_id, source, metadata_status, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'WEB', 'PENDING', NOW(), NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'WEB', 'PENDING', NOW(), NOW())
             ON CONFLICT (user_id, client_request_id) DO UPDATE SET updated_at = bookmarks.updated_at
             RETURNING id, item_type, raw_url, normalized_domain, title, description, site_name,
                       thumbnail_url, favicon_url, is_pinned, is_favorite, is_archived, folder_id,
@@ -104,7 +107,9 @@ impl BookmarksService {
         .bind(&url_hash)
         .bind(&normalized_domain)
         .bind(&title)
+        .bind(user_edited_title)
         .bind(req.description)
+        .bind(user_edited_desc)
         .bind(client_req_id)
         .fetch_one(&self.pool)
         .await?;

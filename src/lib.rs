@@ -3,3 +3,4 @@ pub mod errors;
 pub mod infra;
 pub mod modules;
 pub mod worker;
+pub mod openapi;

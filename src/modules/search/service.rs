@@ -33,15 +33,15 @@ impl SearchService {
         // Limit query length to 200 chars
         let truncated_q = raw_q.chars().take(200).collect::<String>();
 
-        // Tokenize words (max 8 unique words)
+        // Tokenize words (split on any whitespace or non-alphanumeric delimiter, max 8 unique words)
         let words: Vec<String> = truncated_q
-            .split_whitespace()
+            .split(|c: char| !c.is_alphanumeric())
             .filter_map(|w| {
-                let clean: String = w.chars().filter(|c| c.is_alphanumeric()).collect();
+                let clean = w.trim().to_lowercase();
                 if clean.is_empty() {
                     None
                 } else {
-                    Some(clean.to_lowercase())
+                    Some(clean)
                 }
             })
             .collect();

@@ -16,9 +16,20 @@ use cabinet_api::config::AppConfig;
 use cabinet_api::infra::db::create_db_pool;
 use cabinet_api::infra::redis::create_redis_pool;
 use cabinet_api::modules;
+use cabinet_api::openapi::{generate_openapi_json, ApiDoc};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    // 0. Handle CLI flags like --export-openapi
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--export-openapi") {
+        let json = generate_openapi_json();
+        std::fs::write("openapi.json", &json)?;
+        println!("OpenAPI spec exported successfully to openapi.json ({} bytes)", json.len());
+        return Ok(());
+    }
     // 1. Initialize logging
     tracing_subscriber::registry()
         .with(
@@ -38,10 +49,12 @@ async fn main() -> Result<(), anyhow::Error> {
     let pool = match create_db_pool(&config).await {
         Ok(p) => {
             tracing::info!("PostgreSQL connection established successfully");
-            if let Err(e) = sqlx::migrate!("./migrations").run(&p).await {
-                tracing::warn!("Migration error: {}. Continuing...", e);
-            } else {
-                tracing::info!("Database migrations applied successfully");
+            if let Ok(migrator) = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await {
+                if let Err(e) = migrator.run(&p).await {
+                    tracing::warn!("Migration error: {}. Continuing...", e);
+                } else {
+                    tracing::info!("Database migrations applied successfully");
+                }
             }
             p
         }
@@ -110,6 +123,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .with_state(pool.clone());
 
     let app = Router::new()
+        .merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", ApiDoc::openapi()))
         .route("/v1/health", get(|| async {
             Json(serde_json::json!({
                 "status": "healthy",
