@@ -90,3 +90,24 @@ impl BookmarkCursor {
         serde_json::from_slice(&bytes).ok()
     }
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+pub struct BookmarkPreviewDto {
+    pub id: Uuid,
+    pub metadata_status: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub favicon_url: Option<String>,
+    pub site_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BookmarkPreviewsQuery {
+    pub ids: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct BookmarkPreviewsResponse {
+    pub previews: Vec<BookmarkPreviewDto>,
+}

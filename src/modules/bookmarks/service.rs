@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::errors::AppError;
 use crate::worker::queue::{EnrichmentJob, QUEUE_INTERACTIVE};
 use super::dto::{
-    BookmarkCursor, BookmarkListItem, BookmarkListResponse, BookmarkTagSummary,
+    BookmarkCursor, BookmarkListItem, BookmarkListResponse, BookmarkPreviewDto, BookmarkTagSummary,
     CreateBookmarkRequest, ListBookmarksQuery, UpdateBookmarkRequest,
 };
 use super::normalizer::normalize_url;
@@ -564,5 +564,55 @@ impl BookmarksService {
         }
 
         Ok(())
+    }
+
+    pub async fn get_previews(
+        &self,
+        user_id: Uuid,
+        ids: Vec<Uuid>,
+    ) -> Result<Vec<BookmarkPreviewDto>, AppError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let bounded_ids: Vec<Uuid> = ids.into_iter().take(50).collect();
+
+        let rows = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(
+            r#"
+            SELECT id, metadata_status, title, description, thumbnail_url, favicon_url, site_name
+            FROM bookmarks
+            WHERE id = ANY($1) AND user_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(&bounded_ids)
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let previews = rows
+            .into_iter()
+            .map(|r| BookmarkPreviewDto {
+                id: r.0,
+                metadata_status: r.1,
+                title: r.2,
+                description: r.3,
+                thumbnail_url: r.4,
+                favicon_url: r.5,
+                site_name: r.6,
+            })
+            .collect();
+
+        Ok(previews)
     }
 }

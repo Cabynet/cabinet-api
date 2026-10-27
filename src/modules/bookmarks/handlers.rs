@@ -11,8 +11,8 @@ use validator::Validate;
 use crate::errors::AppError;
 use crate::modules::auth::middleware::CurrentUser;
 use super::dto::{
-    BookmarkListItem, BookmarkListResponse, CreateBookmarkRequest, ListBookmarksQuery,
-    UpdateBookmarkRequest,
+    BookmarkListItem, BookmarkListResponse, BookmarkPreviewsQuery, BookmarkPreviewsResponse,
+    CreateBookmarkRequest, ListBookmarksQuery, UpdateBookmarkRequest,
 };
 use super::service::BookmarksService;
 use crate::modules::notes::handlers::{get_note_handler, update_note_handler};
@@ -20,6 +20,7 @@ use crate::modules::notes::handlers::{get_note_handler, update_note_handler};
 pub fn router() -> Router<PgPool> {
     Router::new()
         .route("/", get(list_bookmarks).post(create_bookmark))
+        .route("/previews", get(get_previews))
         .route(
             "/:id",
             get(get_bookmark)
@@ -27,6 +28,22 @@ pub fn router() -> Router<PgPool> {
                 .delete(delete_bookmark),
         )
         .route("/:id/note", get(get_note_handler).put(update_note_handler))
+}
+
+async fn get_previews(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+    Query(query): Query<BookmarkPreviewsQuery>,
+) -> Result<Json<BookmarkPreviewsResponse>, AppError> {
+    let ids: Vec<Uuid> = query
+        .ids
+        .split(',')
+        .filter_map(|s| s.trim().parse::<Uuid>().ok())
+        .collect();
+
+    let service = BookmarksService::new(pool, None);
+    let previews = service.get_previews(user.id, ids).await?;
+    Ok(Json(BookmarkPreviewsResponse { previews }))
 }
 
 async fn list_bookmarks(
