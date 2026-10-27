@@ -4,7 +4,10 @@ use axum::{
     routing::{get, post, put},
     Json, Router,
 };
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -13,11 +16,41 @@ use crate::modules::auth::middleware::CurrentUser;
 use super::dto::{CreateFolderRequest, FolderDto, UpdateFolderRequest};
 use super::service::FoldersService;
 
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PublicFolderDto {
+    pub id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PublicBookmarkItem {
+    pub id: Uuid,
+    pub title: String,
+    pub raw_url: Option<String>,
+    pub normalized_domain: Option<String>,
+    pub description: Option<String>,
+    pub site_name: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub favicon_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PublicShareResponse {
+    pub folder: PublicFolderDto,
+    pub bookmarks: Vec<PublicBookmarkItem>,
+}
+
 pub fn router() -> Router<PgPool> {
     Router::new()
         .route("/", get(list_folders).post(create_folder))
         .route("/:id", put(update_folder).delete(delete_folder))
         .route("/:id/share", post(enable_share).delete(revoke_share))
+}
+
+pub fn public_share_router() -> Router<PgPool> {
+    Router::new().route("/:token", get(get_public_share))
 }
 
 async fn list_folders(
@@ -89,4 +122,67 @@ async fn revoke_share(
     let service = FoldersService::new(pool);
     service.revoke_share(user.id, folder_id).await?;
     Ok(Json(serde_json::json!({ "revoked": true })))
+}
+
+pub async fn get_public_share(
+    State(pool): State<PgPool>,
+    Path(token): Path<String>,
+) -> Result<Json<PublicShareResponse>, AppError> {
+    let service = FoldersService::new(pool.clone());
+    let (folder, owner_id) = service.get_shared_folder(&token).await?;
+
+    // Fetch bookmarks for this folder, excluding notes, archived items, and deleted items
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            DateTime<Utc>,
+        ),
+    >(
+        r#"
+        SELECT id, title, raw_url, normalized_domain, description, site_name, thumbnail_url, favicon_url, created_at
+        FROM bookmarks
+        WHERE folder_id = $1
+          AND user_id = $2
+          AND deleted_at IS NULL
+          AND is_archived = FALSE
+          AND item_type != 'NOTE'
+        ORDER BY is_pinned DESC, position ASC, created_at DESC
+        "#,
+    )
+    .bind(folder.id)
+    .bind(owner_id)
+    .fetch_all(&pool)
+    .await?;
+
+    let bookmarks = rows
+        .into_iter()
+        .map(|r| PublicBookmarkItem {
+            id: r.0,
+            title: r.1,
+            raw_url: r.2,
+            normalized_domain: r.3,
+            description: r.4,
+            site_name: r.5,
+            thumbnail_url: r.6,
+            favicon_url: r.7,
+            created_at: r.8,
+        })
+        .collect();
+
+    Ok(Json(PublicShareResponse {
+        folder: PublicFolderDto {
+            id: folder.id,
+            name: folder.name,
+            description: folder.description,
+        },
+        bookmarks,
+    }))
 }

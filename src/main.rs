@@ -106,6 +106,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .nest("/media", modules::media::handlers::router())
         .nest("/search", modules::search::handlers::router())
         .nest("/tasks", modules::tasks::handlers::router())
+        .nest("/share", modules::folders::handlers::public_share_router())
         .with_state(pool.clone());
 
     let app = Router::new()
