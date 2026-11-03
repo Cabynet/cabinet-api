@@ -1,20 +1,22 @@
-name: Build & Deploy Cabinet API (Rust)
+name: Test, Build & Deploy Cabinet API
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 concurrency:
-  group: deploy-cabinet-api-${{ github.ref }}
-  cancel-in-progress: false
+  group: cabinet-api-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
   test:
-    name: Run Tests
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,57 +24,51 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust Cache
+      - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Tests
-        run: cargo test
+      # Integration tests need Postgres, Redis and an S3 fixture; the script starts them in throwaway containers.
+      - name: Run tests
+        run: bash scripts/test.sh
 
   build-and-push:
-    name: Build & Push Image
+    name: Build & push image
+    if: github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     outputs:
-      image: ${{ steps.meta.outputs.tags }}
       version: ${{ steps.version.outputs.short_sha }}
-      image_name: ${{ env.IMAGE_NAME }}
-
+      image_name: ${{ steps.version.outputs.image_name }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Resolve lowercase image name
+      - name: Resolve image name
         id: version
         run: |
-          LOWER_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_NAME=${LOWER_OWNER}/cabinet-api" >> $GITHUB_ENV
-          echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          echo "image_name=${GITHUB_REPOSITORY_OWNER,,}/cabinet-api" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.version.outputs.image_name }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
             type=sha,format=short,prefix=
-            type=sha,format=long,prefix=
 
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -87,49 +83,69 @@ jobs:
     name: Deploy to VPS
     needs: build-and-push
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read
+      packages: read
+    # Host, port, user, key and path come only from repository secrets/variables so none are committed.
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
     steps:
-      - name: Deploy container with zero downtime
-        uses: appleboy/ssh-action@v1.2.0
+      - uses: actions/checkout@v4
         with:
-          host: ${{ secrets.SSH_HOST || vars.SSH_HOST || '38.9.46.133' }}
-          port: ${{ secrets.SSH_PORT || vars.SSH_PORT || 2222 }}
-          username: ${{ secrets.SSH_USER || vars.SSH_USER || 'adminrekasandi' }}
+          sparse-checkout: docker
+          sparse-checkout-cone-mode: true
+
+      - name: Check deployment settings
+        run: |
+          for name in SSH_HOST DEPLOY_PATH; do
+            [ -n "${!name}" ] || { echo "::error::$name is not configured (Settings > Secrets and variables > Actions)"; exit 1; }
+          done
+
+      - name: Sync compose files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "docker/compose.production.yml,docker/Caddyfile"
+          target: ${{ vars.DEPLOY_PATH }}
+
+      - name: Deploy
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHORT_SHA: ${{ needs.build-and-push.outputs.version }}
+          FULL_IMAGE: ghcr.io/${{ needs.build-and-push.outputs.image_name }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: GHCR_USER,GHCR_TOKEN,SHORT_SHA,FULL_IMAGE,DEPLOY_PATH
           script: |
             set -euo pipefail
-            cd /home/adminrekasandi/cabinet
+            cd "$DEPLOY_PATH"
 
-            # Authenticate to GHCR in case the container package is private
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            # Fail before touching the running container if required settings are missing.
+            for key in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY PROXY_SIGNING_KEY; do
+              grep -q "^${key}=.\+" docker/.env || { echo "docker/.env is missing ${key}"; exit 1; }
+            done
 
-            # Point to GHCR image and specific short commit SHA
-            SHORT_SHA="${{ needs.build-and-push.outputs.version }}"
-            FULL_IMAGE="ghcr.io/${{ needs.build-and-push.outputs.image_name }}"
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
-            # Ensure API_IMAGE in .env points to GHCR
-            if grep -q "^API_IMAGE=" docker/.env; then
-              sed -i "s|^API_IMAGE=.*|API_IMAGE='${FULL_IMAGE}'|" docker/.env
-            else
-              echo "API_IMAGE='${FULL_IMAGE}'" >> docker/.env
-            fi
+            set_env() { # set_env KEY VALUE
+              if grep -q "^$1=" docker/.env; then sed -i "s|^$1=.*|$1='$2'|" docker/.env; else echo "$1='$2'" >> docker/.env; fi
+            }
+            set_env API_IMAGE "$FULL_IMAGE"
+            set_env IMAGE_TAG "$SHORT_SHA"
 
-            # Update IMAGE_TAG to current deployment tag
-            if grep -q "^IMAGE_TAG=" docker/.env; then
-              sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG='${SHORT_SHA}'|" docker/.env
-            else
-              echo "IMAGE_TAG='${SHORT_SHA}'" >> docker/.env
-            fi
+            compose="docker compose --env-file docker/.env -f docker/compose.production.yml"
+            $compose pull api
+            # The binary runs its SQL migrations on startup; --wait blocks until the healthcheck passes.
+            $compose up -d --wait api
 
-            # Pull the new Rust image from GHCR
-            docker compose --env-file docker/.env -f docker/compose.production.yml pull api
-
-            # Recreate api service with zero downtime (Rust binary runs SQLx migrations on startup automatically)
-            docker compose --env-file docker/.env -f docker/compose.production.yml up -d --wait api
-
-            # Health verification
-            echo "Verifying API health..."
-            curl --fail --silent --show-error --retry 6 --retry-delay 3 http://localhost:4000/v1/health
-
-            # Prune dangling/old images
+            curl --fail --silent --show-error --retry 6 --retry-delay 3 "http://127.0.0.1:4000/v1/health"
             docker image prune -f

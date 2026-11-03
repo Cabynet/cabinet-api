@@ -58,7 +58,8 @@ impl AppConfig {
         let frontend_url = env::var("FRONTEND_URL")
             .unwrap_or_else(|_| "http://localhost:3000".to_string());
 
-        let cookie_domain = env::var("COOKIE_DOMAIN").ok().filter(|s| !s.is_empty());
+        // Browsers reject Domain=localhost, so treat it as "host-only cookie" (the dev default).
+        let cookie_domain = env::var("COOKIE_DOMAIN").ok().filter(|s| !s.is_empty() && s != "localhost");
         let api_url = env::var("API_URL").unwrap_or_else(|_| "http://localhost:4000".to_string());
 
         let google_client_id = env::var("GOOGLE_CLIENT_ID").unwrap_or_default();

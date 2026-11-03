@@ -1,0 +1,123 @@
+name: cabinet
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    command: [redis-server, --appendonly, "yes", --maxmemory, 96mb, --maxmemory-policy, noeviction]
+    volumes:
+      - redis_data:/data
+    networks: [backend]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/cabynet/cabinet-api}:${IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    mem_limit: 256m
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "4000"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      REDIS_URL: redis://redis:6379
+      # Signs /v1/bookmarks/proxy-image and proxy-page URLs; the API refuses to boot over https without it.
+      PROXY_SIGNING_KEY: ${PROXY_SIGNING_KEY:?required}
+      # Safe here: the API port is bound to 127.0.0.1 and only reached through the reverse proxy.
+      TRUSTED_PROXY: ${TRUSTED_PROXY:-true}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      API_URL: ${API_URL:-http://localhost:4000}
+      # Parent domain shared by web and API (e.g. example.com); empty = host-only cookie.
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:?required}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:?required}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME:-cabinet}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      MAX_DB_CONNECTIONS: "15"
+      INTERACTIVE_WORKER_CONCURRENCY: "4"
+      BULK_WORKER_CONCURRENCY: "2"
+    ports:
+      - "127.0.0.1:${API_PORT:-4000}:4000"
+    networks: [backend, outbound]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:4000/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: [https]
+    restart: unless-stopped
+    mem_limit: 128m
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [outbound]
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *logging
+
+networks:
+  backend:
+    internal: true
+  outbound:
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
