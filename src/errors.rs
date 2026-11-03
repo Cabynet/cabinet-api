@@ -23,6 +23,9 @@ pub enum AppError {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
+
     #[error("Storage quota exceeded")]
     QuotaExceeded,
 
@@ -58,6 +61,7 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, "FORBIDDEN", msg.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, "NOT_FOUND", msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone()),
+            AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", msg.clone()),
             AppError::QuotaExceeded => (
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "QUOTA_EXCEEDED",

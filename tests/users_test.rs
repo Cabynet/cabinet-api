@@ -2,8 +2,8 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::db::create_db_pool,
     modules::{
         auth::{
@@ -21,13 +21,8 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_user_profile_change_password_and_delete() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
-
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => return,
-    };
+    let config = common::config();
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
 
     let app = axum::Router::new()
         .nest("/v1/auth", auth_router())
@@ -97,6 +92,21 @@ async fn test_user_profile_change_password_and_delete() {
     let wrong_pw_resp = app.clone().oneshot(wrong_pw_req).await.unwrap();
     assert_eq!(wrong_pw_resp.status(), StatusCode::UNAUTHORIZED);
 
+    // A second session (another device) that a password change must revoke.
+    let other_login = Request::builder()
+        .method("POST")
+        .uri("/v1/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&LoginRequest { email: email.clone(), password: "OldPassword123!".to_string() }).unwrap(),
+        ))
+        .unwrap();
+    let other_resp = app.clone().oneshot(other_login).await.unwrap();
+    assert_eq!(other_resp.status(), StatusCode::OK);
+    let other_session: SessionResponse =
+        serde_json::from_slice(&axum::body::to_bytes(other_resp.into_body(), 1024 * 64).await.unwrap()).unwrap();
+    let other_auth = format!("Bearer {}", other_session.token);
+
     // 4. Change Password with correct current password -> 200
     let right_pw_req = Request::builder()
         .method("POST")
@@ -118,6 +128,17 @@ async fn test_user_profile_change_password_and_delete() {
     let action_res: UserActionResponse = serde_json::from_slice(&right_pw_bytes).unwrap();
     assert!(action_res.success);
 
+    // The other session is revoked; the one that changed the password survives.
+    let me_status = |token: String| {
+        let app = app.clone();
+        async move {
+            let req = Request::builder().uri("/v1/auth/me").header(header::AUTHORIZATION, token).body(Body::empty()).unwrap();
+            app.oneshot(req).await.unwrap().status()
+        }
+    };
+    assert_eq!(me_status(other_auth).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(me_status(auth_header.clone()).await, StatusCode::OK);
+
     // 5. Login with New Password
     let login_req = Request::builder()
         .method("POST")
@@ -135,12 +156,23 @@ async fn test_user_profile_change_password_and_delete() {
     let login_resp = app.clone().oneshot(login_req).await.unwrap();
     assert_eq!(login_resp.status(), StatusCode::OK);
 
-    // 6. Delete Account
+    // 6. Delete Account requires the current password
+    for body in [Body::empty(), Body::from(r#"{"currentPassword":"wrong-password"}"#)] {
+        let bad = Request::builder()
+            .method("DELETE")
+            .uri("/v1/users/me")
+            .header(header::AUTHORIZATION, &auth_header)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(body)
+            .unwrap();
+        assert_eq!(app.clone().oneshot(bad).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    }
     let del_req = Request::builder()
         .method("DELETE")
         .uri("/v1/users/me")
         .header(header::AUTHORIZATION, &auth_header)
-        .body(Body::empty())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"currentPassword":"NewPassword456!"}"#))
         .unwrap();
 
     let del_resp = app.clone().oneshot(del_req).await.unwrap();

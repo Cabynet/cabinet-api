@@ -2,14 +2,16 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::errors::AppError;
 use super::dto::{AuthUser, LoginRequest, RegisterRequest, SessionResponse};
+use crate::errors::AppError;
+
+const SESSION_DURATION_DAYS: i64 = 30;
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -42,11 +44,7 @@ impl AuthService {
         let mut random_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut random_bytes);
         let raw_token = hex::encode(random_bytes);
-
-        let mut hasher = Sha256::new();
-        hasher.update(raw_token.as_bytes());
-        let token_hash = hasher.finalize().to_vec();
-
+        let token_hash = Self::hash_token(&raw_token);
         (raw_token, token_hash)
     }
 
@@ -91,7 +89,14 @@ impl AuthService {
         .bind(&password_hash)
         .bind(&name)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| match e {
+            // Lost the race with a concurrent registration of the same email.
+            sqlx::Error::Database(ref db) if db.is_unique_violation() => {
+                AppError::Conflict("Email already registered".to_string())
+            }
+            e => e.into(),
+        })?;
 
         let user = AuthUser {
             id: user_id,
@@ -154,11 +159,13 @@ impl AuthService {
     ) -> Result<SessionResponse, AppError> {
         let (raw_token, token_hash) = Self::generate_token();
         let session_id = Uuid::now_v7();
-        let expires_at = Utc::now() + Duration::days(30);
+        let expires_at = Utc::now() + Duration::days(SESSION_DURATION_DAYS);
 
         sqlx::query(
             r#"
-            INSERT INTO auth_sessions (id, user_id, token_hash, client_type, user_agent, ip_address, expires_at, created_at, last_active_at)
+            INSERT INTO auth_sessions (
+                id, user_id, token_hash, client_type, user_agent, ip_address, expires_at, created_at, last_active_at
+            )
             VALUES ($1, $2, $3, $4, $5, $6::inet, $7, NOW(), NOW())
             "#,
         )
@@ -179,12 +186,26 @@ impl AuthService {
         })
     }
 
-    pub async fn validate_session_token(&self, raw_token: &str) -> Result<AuthUser, AppError> {
+    pub async fn validate_session_token(
+        &self,
+        raw_token: &str,
+    ) -> Result<(AuthUser, super::dto::SessionMetadata), AppError> {
         let token_hash = Self::hash_token(raw_token);
 
-        let row = sqlx::query_as::<_, (Uuid, String, String, Option<String>)>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                String,
+                Option<String>,
+                Uuid,
+                DateTime<Utc>,
+                DateTime<Utc>,
+            ),
+        >(
             r#"
-            SELECT u.id, u.email, u.name, u.avatar_url
+            SELECT u.id, u.email, u.name, u.avatar_url, s.id, s.expires_at, s.created_at
             FROM auth_sessions s
             JOIN users u ON s.user_id = u.id
             WHERE s.token_hash = $1
@@ -196,12 +217,20 @@ impl AuthService {
         .await?;
 
         match row {
-            Some((id, email, name, avatar_url)) => Ok(AuthUser {
-                id,
-                email,
-                name,
-                avatar_url,
-            }),
+            Some((id, email, name, avatar_url, session_id, expires_at, created_at)) => Ok((
+                AuthUser {
+                    id,
+                    email,
+                    name,
+                    avatar_url,
+                },
+                super::dto::SessionMetadata {
+                    id: session_id,
+                    user_id: id,
+                    expires_at,
+                    created_at,
+                },
+            )),
             None => Err(AppError::Unauthorized("Invalid or expired session".to_string())),
         }
     }

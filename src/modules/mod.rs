@@ -1,3 +1,5 @@
+pub mod operations;
+pub mod activity;
 pub mod auth;
 pub mod bookmarks;
 pub mod folders;
@@ -7,3 +9,4 @@ pub mod media;
 pub mod search;
 pub mod tasks;
 pub mod users;
+pub mod responses;

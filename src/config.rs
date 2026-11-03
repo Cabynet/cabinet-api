@@ -6,7 +6,6 @@ pub struct AppConfig {
     pub port: u16,
     pub database_url: String,
     pub redis_url: String,
-    pub session_secret: String,
     pub frontend_url: String,
     pub cookie_domain: Option<String>,
     pub max_db_connections: u32,
@@ -19,6 +18,7 @@ pub struct AppConfig {
     pub github_client_secret: String,
 
     // Cloudflare R2
+    pub r2_endpoint: String,
     pub r2_account_id: String,
     pub r2_access_key_id: String,
     pub r2_secret_access_key: String,
@@ -28,10 +28,19 @@ pub struct AppConfig {
     // Worker configuration
     pub interactive_worker_concurrency: usize,
     pub bulk_worker_concurrency: usize,
-    pub image_resize_concurrency: usize,
 }
 
 impl AppConfig {
+    /// Parsed once per process; handlers use this instead of re-reading the environment per request.
+    pub fn shared() -> Result<&'static AppConfig, anyhow::Error> {
+        static CONFIG: std::sync::OnceLock<AppConfig> = std::sync::OnceLock::new();
+        if let Some(config) = CONFIG.get() {
+            return Ok(config);
+        }
+        let config = Self::from_env()?;
+        Ok(CONFIG.get_or_init(|| config))
+    }
+
     pub fn from_env() -> Result<Self, anyhow::Error> {
         dotenvy::dotenv().ok();
 
@@ -45,9 +54,6 @@ impl AppConfig {
 
         let redis_url = env::var("REDIS_URL")
             .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-
-        let session_secret = env::var("SESSION_SECRET")
-            .unwrap_or_else(|_| "development-secret-key-at-least-32-chars-long!!".to_string());
 
         let frontend_url = env::var("FRONTEND_URL")
             .unwrap_or_else(|_| "http://localhost:3000".to_string());
@@ -66,6 +72,7 @@ impl AppConfig {
             .parse::<u32>()?;
 
         let r2_account_id = env::var("R2_ACCOUNT_ID").unwrap_or_default();
+        let r2_endpoint = env::var("R2_ENDPOINT").unwrap_or_else(|_|format!("https://{}.r2.cloudflarestorage.com",r2_account_id));
         let r2_access_key_id = env::var("R2_ACCESS_KEY_ID").unwrap_or_default();
         let r2_secret_access_key = env::var("R2_SECRET_ACCESS_KEY").unwrap_or_default();
         let r2_bucket_name = env::var("R2_BUCKET_NAME").unwrap_or_else(|_| "cabinet".to_string());
@@ -79,16 +86,11 @@ impl AppConfig {
             .unwrap_or_else(|_| "2".to_string())
             .parse::<usize>()?;
 
-        let image_resize_concurrency = env::var("IMAGE_RESIZE_CONCURRENCY")
-            .unwrap_or_else(|_| "1".to_string())
-            .parse::<usize>()?;
-
         Ok(Self {
             host,
             port,
             database_url,
             redis_url,
-            session_secret,
             frontend_url,
             cookie_domain,
             max_db_connections,
@@ -97,6 +99,7 @@ impl AppConfig {
             google_client_secret,
             github_client_id,
             github_client_secret,
+            r2_endpoint,
             r2_account_id,
             r2_access_key_id,
             r2_secret_access_key,
@@ -104,7 +107,6 @@ impl AppConfig {
             r2_public_url,
             interactive_worker_concurrency,
             bulk_worker_concurrency,
-            image_resize_concurrency,
         })
     }
 }

@@ -9,6 +9,71 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/v1/activity": {
+      "get": {
+        "tags": [
+          "activity"
+        ],
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-based page",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "nullable": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/activity/metadata/{id}/retry": {
+      "post": {
+        "tags": [
+          "activity"
+        ],
+        "operationId": "retry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Resource ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/auth/login": {
       "post": {
         "tags": [
@@ -70,11 +135,11 @@
         "operationId": "me_handler",
         "responses": {
           "200": {
-            "description": "Current authenticated user",
+            "description": "Current authenticated user and active session metadata",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthUser"
+                  "$ref": "#/components/schemas/MeResponse"
                 }
               }
             }
@@ -117,7 +182,7 @@
             }
           },
           {
-            "name": "client_type",
+            "name": "clientType",
             "in": "query",
             "required": false,
             "schema": {
@@ -126,7 +191,7 @@
             }
           },
           {
-            "name": "redirect_uri",
+            "name": "redirectUri",
             "in": "query",
             "required": false,
             "schema": {
@@ -211,6 +276,34 @@
         }
       }
     },
+    "/v1/auth/sign-in/social": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "operationId": "sign_in_social_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignInSocialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OAuth authorization URL",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/bookmarks": {
       "get": {
         "tags": [
@@ -219,7 +312,7 @@
         "operationId": "list_bookmarks",
         "parameters": [
           {
-            "name": "folder_id",
+            "name": "folderId",
             "in": "query",
             "required": false,
             "schema": {
@@ -247,7 +340,7 @@
             }
           },
           {
-            "name": "is_archived",
+            "name": "isArchived",
             "in": "query",
             "required": false,
             "schema": {
@@ -256,7 +349,90 @@
             }
           },
           {
-            "name": "is_favorite",
+            "name": "isFavorite",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "nullable": true
+            }
+          },
+          {
+            "name": "trash",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "nullable": true
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          {
+            "name": "contentType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          {
+            "name": "addedAfter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "nullable": true
+            }
+          },
+          {
+            "name": "addedBefore",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "nullable": true
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          {
+            "name": "summary",
             "in": "query",
             "required": false,
             "schema": {
@@ -326,6 +502,48 @@
         }
       }
     },
+    "/v1/bookmarks/bulk/{action}": {
+      "post": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "bulk",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "description": "trash | restore | permanent-delete | archive | move | tags",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AffectedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/bookmarks/duplicates": {
       "get": {
         "tags": [
@@ -366,6 +584,37 @@
         }
       }
     },
+    "/v1/bookmarks/embeddable": {
+      "get": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "embeddable",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "description": "Page URL",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddableResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/bookmarks/export": {
       "get": {
         "tags": [
@@ -375,6 +624,46 @@
         "responses": {
           "200": {
             "description": "Netscape Bookmark HTML file export"
+          }
+        }
+      }
+    },
+    "/v1/bookmarks/health": {
+      "get": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkHealthSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bookmarks/health/check": {
+      "post": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "check_health",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskQueuedResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -402,6 +691,130 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BookmarkPreviewsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bookmarks/proxy-image": {
+      "get": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "proxy_image_handler",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "description": "HMAC of `url` from POST /v1/bookmarks/proxy-image/sign.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Proxied image binary"
+          }
+        }
+      }
+    },
+    "/v1/bookmarks/reorder": {
+      "post": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "reorder",
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AffectedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bookmarks/scrape": {
+      "get": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "scrape",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "description": "Page URL",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScrapeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bookmarks/trash/empty": {
+      "delete": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "empty_trash",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AffectedResponse"
                 }
               }
             }
@@ -536,6 +949,49 @@
         }
       }
     },
+    "/v1/bookmarks/{id}/drawing": {
+      "put": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "save_drawing",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Resource ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrawingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/bookmarks/{id}/note": {
       "get": {
         "tags": [
@@ -618,6 +1074,70 @@
         }
       }
     },
+    "/v1/bookmarks/{id}/permanent": {
+      "delete": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "permanent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Resource ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AffectedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bookmarks/{id}/restore": {
+      "post": {
+        "tags": [
+          "bookmarks"
+        ],
+        "operationId": "restore",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Resource ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AffectedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/folders": {
       "get": {
         "tags": [
@@ -662,6 +1182,37 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FolderDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/folders/invitations/{token}/accept": {
+      "post": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "accept",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Invitation token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedInvitationResponse"
                 }
               }
             }
@@ -734,7 +1285,319 @@
         }
       }
     },
+    "/v1/folders/{id}/collaboration": {
+      "get": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "collaboration",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollaborationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/folders/{id}/invitation": {
+      "put": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "invite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationTokenResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "remove_invite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "change_invite",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdatedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/folders/{id}/members": {
+      "post": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "add_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberAddedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/folders/{id}/members/{member}": {
+      "delete": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "remove_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "member",
+            "in": "path",
+            "description": "Member user ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "change_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "member",
+            "in": "path",
+            "description": "Member user ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdatedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/folders/{id}/share": {
+      "get": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "share_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTokenResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "folders"
@@ -754,7 +1617,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Share token generated"
+            "description": "Share token generated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTokenResponse"
+                }
+              }
+            }
           }
         }
       },
@@ -777,7 +1647,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Share revoked successfully"
+            "description": "Share revoked successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTokenResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -847,6 +1724,46 @@
         }
       }
     },
+    "/v1/operations/access": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "access",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsAccessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/operations/metrics": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "operationId": "metrics",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsMetrics"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/search": {
       "get": {
         "tags": [
@@ -863,7 +1780,7 @@
             }
           },
           {
-            "name": "folder_id",
+            "name": "folderId",
             "in": "query",
             "required": false,
             "schema": {
@@ -949,6 +1866,37 @@
         }
       }
     },
+    "/v1/share/{token}/copy": {
+      "post": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "copy_public_share",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Share token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopiedShareResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tags": {
       "get": {
         "tags": [
@@ -1000,6 +1948,26 @@
         }
       }
     },
+    "/v1/tags/unused": {
+      "delete": {
+        "tags": [
+          "tags"
+        ],
+        "operationId": "delete_unused",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedCountResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/tags/{id}": {
       "delete": {
         "tags": [
@@ -1023,6 +1991,90 @@
             "description": "Tag deleted successfully"
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "tags"
+        ],
+        "operationId": "rename_tag",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Resource ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTagRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdatedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tags/{id}/merge": {
+      "post": {
+        "tags": [
+          "tags"
+        ],
+        "operationId": "merge_tag",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Resource ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergedResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/tasks/import-html": {
@@ -1032,8 +2084,8 @@
         ],
         "operationId": "import_html_handler",
         "responses": {
-          "201": {
-            "description": "Import task queued and processed",
+          "202": {
+            "description": "Durable import task accepted",
             "content": {
               "application/json": {
                 "schema": {
@@ -1076,10 +2128,271 @@
           }
         }
       }
+    },
+    "/v1/users/change-password": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "operationId": "change_password_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Password updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Current password incorrect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/me": {
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "operationId": "delete_account_handler",
+        "requestBody": {
+          "description": "currentPassword is required for accounts that have a password",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Account deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserActionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Current password incorrect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "operationId": "update_profile_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Profile updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUser"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AcceptedInvitationResponse": {
+        "type": "object",
+        "required": [
+          "folderId"
+        ],
+        "properties": {
+          "folderId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ActivityMetadata": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "updatedAt"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "ActivityResponse": {
+        "type": "object",
+        "required": [
+          "tasks",
+          "metadata",
+          "page",
+          "hasMore"
+        ],
+        "properties": {
+          "hasMore": {
+            "type": "boolean"
+          },
+          "metadata": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityMetadata"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityTask"
+            }
+          }
+        }
+      },
+      "ActivityTask": {
+        "type": "object",
+        "required": [
+          "id",
+          "userId",
+          "kind",
+          "status",
+          "totalItems",
+          "processedItems",
+          "failedItems",
+          "createdAt",
+          "attempt",
+          "updatedAt"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "failedItems": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "processedItems": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string"
+          },
+          "totalItems": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AffectedResponse": {
+        "type": "object",
+        "required": [
+          "affected"
+        ],
+        "properties": {
+          "affected": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "AuthUser": {
         "type": "object",
         "required": [
@@ -1088,7 +2401,7 @@
           "name"
         ],
         "properties": {
-          "avatar_url": {
+          "avatarUrl": {
             "type": "string",
             "nullable": true
           },
@@ -1108,30 +2421,49 @@
         "type": "object",
         "required": [
           "id",
-          "item_type",
+          "userId",
+          "access",
+          "itemType",
           "title",
-          "is_pinned",
-          "is_favorite",
-          "is_archived",
-          "metadata_status",
+          "isPinned",
+          "isFavorite",
+          "isArchived",
+          "metadataStatus",
+          "noteRevision",
+          "position",
           "tags",
-          "created_at",
-          "updated_at"
+          "createdAt",
+          "updatedAt"
         ],
         "properties": {
-          "created_at": {
+          "access": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           },
           "description": {
             "type": "string",
             "nullable": true
           },
-          "favicon_url": {
+          "drawing": {
+            "nullable": true
+          },
+          "faviconUrl": {
             "type": "string",
             "nullable": true
           },
-          "folder_id": {
+          "folderId": {
             "type": "string",
             "format": "uuid",
             "nullable": true
@@ -1140,30 +2472,49 @@
             "type": "string",
             "format": "uuid"
           },
-          "is_archived": {
+          "isArchived": {
             "type": "boolean"
           },
-          "is_favorite": {
+          "isFavorite": {
             "type": "boolean"
           },
-          "is_pinned": {
+          "isPinned": {
             "type": "boolean"
           },
-          "item_type": {
+          "itemType": {
             "type": "string"
           },
-          "metadata_status": {
-            "type": "string"
-          },
-          "normalized_domain": {
+          "metadataError": {
             "type": "string",
             "nullable": true
           },
-          "raw_url": {
+          "metadataStatus": {
+            "type": "string"
+          },
+          "normalizedDomain": {
             "type": "string",
             "nullable": true
           },
-          "site_name": {
+          "noteDocument": {
+            "nullable": true
+          },
+          "noteRevision": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "notesPlain": {
+            "type": "string",
+            "nullable": true
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "rawUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "siteName": {
             "type": "string",
             "nullable": true
           },
@@ -1173,16 +2524,20 @@
               "$ref": "#/components/schemas/BookmarkTagSummary"
             }
           },
-          "thumbnail_url": {
+          "thumbnailUrl": {
             "type": "string",
             "nullable": true
           },
           "title": {
             "type": "string"
           },
-          "updated_at": {
+          "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -1190,10 +2545,11 @@
         "type": "object",
         "required": [
           "items",
-          "has_more"
+          "hasMore",
+          "totalCount"
         ],
         "properties": {
-          "has_more": {
+          "hasMore": {
             "type": "boolean"
           },
           "items": {
@@ -1202,9 +2558,13 @@
               "$ref": "#/components/schemas/BookmarkListItem"
             }
           },
-          "next_cursor": {
+          "nextCursor": {
             "type": "string",
             "nullable": true
+          },
+          "totalCount": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -1212,7 +2572,8 @@
         "type": "object",
         "required": [
           "id",
-          "metadata_status",
+          "updatedAt",
+          "metadataStatus",
           "title"
         ],
         "properties": {
@@ -1220,7 +2581,7 @@
             "type": "string",
             "nullable": true
           },
-          "favicon_url": {
+          "faviconUrl": {
             "type": "string",
             "nullable": true
           },
@@ -1228,19 +2589,27 @@
             "type": "string",
             "format": "uuid"
           },
-          "metadata_status": {
+          "metadataStatus": {
             "type": "string"
           },
-          "site_name": {
+          "rawUrl": {
             "type": "string",
             "nullable": true
           },
-          "thumbnail_url": {
+          "siteName": {
+            "type": "string",
+            "nullable": true
+          },
+          "thumbnailUrl": {
             "type": "string",
             "nullable": true
           },
           "title": {
             "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -1289,19 +2658,91 @@
           }
         }
       },
+      "BulkRequest": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "folderId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "isArchived": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        }
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "required": [
+          "newPassword"
+        ],
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "nullable": true
+          },
+          "newPassword": {
+            "type": "string"
+          }
+        }
+      },
+      "CollaborationResponse": {
+        "type": "object",
+        "required": [
+          "owner",
+          "members",
+          "inviteEnabled"
+        ],
+        "properties": {
+          "inviteEnabled": {
+            "type": "boolean"
+          },
+          "inviteRole": {
+            "type": "string",
+            "nullable": true
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FolderMemberDto"
+            }
+          },
+          "owner": {
+            "$ref": "#/components/schemas/FolderUserDto"
+          }
+        }
+      },
       "ConfirmUploadResponse": {
         "type": "object",
         "required": [
-          "asset_id",
+          "assetId",
           "status",
-          "public_url"
+          "publicUrl"
         ],
         "properties": {
-          "asset_id": {
+          "assetId": {
             "type": "string",
             "format": "uuid"
           },
-          "public_url": {
+          "publicUrl": {
             "type": "string"
           },
           "status": {
@@ -1309,24 +2750,59 @@
           }
         }
       },
+      "CopiedShareResponse": {
+        "type": "object",
+        "required": [
+          "folderId",
+          "copied"
+        ],
+        "properties": {
+          "copied": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "folderId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "CreateBookmarkRequest": {
         "type": "object",
         "properties": {
-          "client_request_id": {
+          "clientRequestId": {
             "type": "string",
             "format": "uuid",
+            "nullable": true
+          },
+          "contentType": {
+            "type": "string",
             "nullable": true
           },
           "description": {
             "type": "string",
             "nullable": true
           },
-          "folder_id": {
+          "drawing": {
+            "nullable": true
+          },
+          "faviconUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "folderId": {
             "type": "string",
             "format": "uuid",
             "nullable": true
           },
-          "item_type": {
+          "itemType": {
+            "type": "string",
+            "nullable": true
+          },
+          "noteDocument": {
+            "nullable": true
+          },
+          "notesPlain": {
             "type": "string",
             "nullable": true
           },
@@ -1335,6 +2811,10 @@
             "items": {
               "type": "string"
             },
+            "nullable": true
+          },
+          "thumbnailUrl": {
+            "type": "string",
             "nullable": true
           },
           "title": {
@@ -1360,7 +2840,7 @@
           "name": {
             "type": "string"
           },
-          "parent_id": {
+          "parentId": {
             "type": "string",
             "format": "uuid",
             "nullable": true
@@ -1378,14 +2858,59 @@
           }
         }
       },
+      "DeleteAccountRequest": {
+        "type": "object",
+        "description": "Password accounts must re-enter their password; OAuth-only accounts have none to check.",
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "DeletedCountResponse": {
+        "type": "object",
+        "required": [
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "DrawingRequest": {
+        "type": "object",
+        "required": [
+          "scene"
+        ],
+        "properties": {
+          "folderId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "preview": {
+            "type": "string",
+            "nullable": true
+          },
+          "scene": {},
+          "title": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
       "DuplicateCleanupResponse": {
         "type": "object",
         "required": [
-          "cleaned_items",
+          "cleanedItems",
           "message"
         ],
         "properties": {
-          "cleaned_items": {
+          "cleanedItems": {
             "type": "integer",
             "minimum": 0
           },
@@ -1413,7 +2938,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DuplicateItemDto"
+              "$ref": "#/components/schemas/BookmarkListItem"
             }
           },
           "url": {
@@ -1421,32 +2946,11 @@
           }
         }
       },
-      "DuplicateItemDto": {
-        "type": "object",
-        "required": [
-          "id",
-          "title",
-          "created_at"
-        ],
-        "properties": {
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "title": {
-            "type": "string"
-          }
-        }
-      },
       "DuplicateReportResponse": {
         "type": "object",
         "required": [
-          "total_duplicate_groups",
-          "total_redundant_items",
+          "totalDuplicateGroups",
+          "totalRedundantItems",
           "groups"
         ],
         "properties": {
@@ -1456,13 +2960,24 @@
               "$ref": "#/components/schemas/DuplicateGroupDto"
             }
           },
-          "total_duplicate_groups": {
+          "totalDuplicateGroups": {
             "type": "integer",
             "minimum": 0
           },
-          "total_redundant_items": {
+          "totalRedundantItems": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "EmbeddableResponse": {
+        "type": "object",
+        "required": [
+          "embeddable"
+        ],
+        "properties": {
+          "embeddable": {
+            "type": "boolean"
           }
         }
       },
@@ -1497,13 +3012,17 @@
         "required": [
           "id",
           "name",
+          "access",
           "position",
-          "share_enabled",
-          "created_at",
-          "updated_at"
+          "shareEnabled",
+          "createdAt",
+          "updatedAt"
         ],
         "properties": {
-          "created_at": {
+          "access": {
+            "type": "string"
+          },
+          "createdAt": {
             "type": "string",
             "format": "date-time"
           },
@@ -1518,7 +3037,7 @@
           "name": {
             "type": "string"
           },
-          "parent_id": {
+          "parentId": {
             "type": "string",
             "format": "uuid",
             "nullable": true
@@ -1527,12 +3046,75 @@
             "type": "integer",
             "format": "int32"
           },
-          "share_enabled": {
+          "shareEnabled": {
             "type": "boolean"
           },
-          "updated_at": {
+          "updatedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "FolderMemberDto": {
+        "type": "object",
+        "required": [
+          "userId",
+          "role",
+          "user"
+        ],
+        "properties": {
+          "role": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/FolderUserDto"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "FolderUserDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "IdResponse": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "InvitationTokenResponse": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
           }
         }
       },
@@ -1540,10 +3122,10 @@
         "type": "object",
         "required": [
           "id",
-          "link_health"
+          "linkHealth"
         ],
         "properties": {
-          "http_status_code": {
+          "httpStatusCode": {
             "type": "integer",
             "format": "int32",
             "nullable": true
@@ -1552,12 +3134,64 @@
             "type": "string",
             "format": "uuid"
           },
-          "link_health": {
+          "linkHealth": {
             "type": "string"
           },
           "url": {
             "type": "string",
             "nullable": true
+          }
+        }
+      },
+      "LinkHealthSummary": {
+        "type": "object",
+        "required": [
+          "total",
+          "broken",
+          "ok",
+          "healthy",
+          "redirected",
+          "favorites",
+          "archived",
+          "trash"
+        ],
+        "properties": {
+          "archived": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "broken": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "favorites": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "healthy": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "lastCheck": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "ok": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "redirected": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "trash": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -1576,18 +3210,96 @@
           }
         }
       },
+      "MeResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "name",
+          "session"
+        ],
+        "properties": {
+          "avatarUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionMetadata"
+          }
+        }
+      },
+      "MemberAddedResponse": {
+        "type": "object",
+        "required": [
+          "userId"
+        ],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "MemberRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "role"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
+      "MergeRequest": {
+        "type": "object",
+        "required": [
+          "targetId"
+        ],
+        "properties": {
+          "targetId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "MergedResponse": {
+        "type": "object",
+        "required": [
+          "merged"
+        ],
+        "properties": {
+          "merged": {
+            "type": "boolean"
+          }
+        }
+      },
       "NoteConflictError": {
         "type": "object",
         "required": [
           "code",
           "message",
-          "current_revision"
+          "currentRevision"
         ],
         "properties": {
           "code": {
             "type": "string"
           },
-          "current_revision": {
+          "currentRevision": {
             "type": "integer",
             "format": "int32"
           },
@@ -1601,7 +3313,7 @@
         "required": [
           "id",
           "revision",
-          "updated_at"
+          "updatedAt"
         ],
         "properties": {
           "document": {
@@ -1612,7 +3324,7 @@
             "type": "string",
             "format": "uuid"
           },
-          "plain_text": {
+          "plainText": {
             "type": "string",
             "nullable": true
           },
@@ -1620,12 +3332,12 @@
             "type": "integer",
             "format": "int32"
           },
-          "save_id": {
+          "saveId": {
             "type": "string",
             "format": "uuid",
             "nullable": true
           },
-          "updated_at": {
+          "updatedAt": {
             "type": "string",
             "format": "date-time"
           }
@@ -1634,7 +3346,7 @@
       "OAuthAuthorizeQuery": {
         "type": "object",
         "properties": {
-          "client_type": {
+          "clientType": {
             "type": "string",
             "nullable": true
           },
@@ -1642,7 +3354,7 @@
             "type": "string",
             "nullable": true
           },
-          "redirect_uri": {
+          "redirectUri": {
             "type": "string",
             "nullable": true
           }
@@ -1652,11 +3364,11 @@
         "type": "object",
         "required": [
           "provider",
-          "authorization_url",
+          "authorizationUrl",
           "state"
         ],
         "properties": {
-          "authorization_url": {
+          "authorizationUrl": {
             "type": "string"
           },
           "provider": {
@@ -1667,21 +3379,78 @@
           }
         }
       },
+      "OperationsAccessResponse": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "OperationsMetrics": {
+        "type": "object",
+        "required": [
+          "uptimeSeconds",
+          "routes",
+          "tasks",
+          "metadata",
+          "sampling"
+        ],
+        "properties": {
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RouteMetrics"
+            }
+          },
+          "rssBytes": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "minimum": 0
+          },
+          "sampling": {
+            "type": "string"
+          },
+          "tasks": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          "uptimeSeconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "PresignUploadRequest": {
         "type": "object",
         "required": [
           "filename",
-          "mime_type",
-          "size_bytes"
+          "mimeType",
+          "sizeBytes"
         ],
         "properties": {
           "filename": {
             "type": "string"
           },
-          "mime_type": {
+          "mimeType": {
             "type": "string"
           },
-          "size_bytes": {
+          "sizeBytes": {
             "type": "integer",
             "format": "int64"
           }
@@ -1690,29 +3459,29 @@
       "PresignUploadResponse": {
         "type": "object",
         "required": [
-          "asset_id",
-          "upload_url",
-          "public_url",
-          "object_key",
-          "expires_seconds"
+          "assetId",
+          "uploadUrl",
+          "publicUrl",
+          "objectKey",
+          "expiresSeconds"
         ],
         "properties": {
-          "asset_id": {
+          "assetId": {
             "type": "string",
             "format": "uuid"
           },
-          "expires_seconds": {
+          "expiresSeconds": {
             "type": "integer",
             "format": "int64",
             "minimum": 0
           },
-          "object_key": {
+          "objectKey": {
             "type": "string"
           },
-          "public_url": {
+          "publicUrl": {
             "type": "string"
           },
-          "upload_url": {
+          "uploadUrl": {
             "type": "string"
           }
         }
@@ -1722,10 +3491,10 @@
         "required": [
           "id",
           "title",
-          "created_at"
+          "createdAt"
         ],
         "properties": {
-          "created_at": {
+          "createdAt": {
             "type": "string",
             "format": "date-time"
           },
@@ -1733,7 +3502,7 @@
             "type": "string",
             "nullable": true
           },
-          "favicon_url": {
+          "faviconUrl": {
             "type": "string",
             "nullable": true
           },
@@ -1741,19 +3510,19 @@
             "type": "string",
             "format": "uuid"
           },
-          "normalized_domain": {
+          "normalizedDomain": {
             "type": "string",
             "nullable": true
           },
-          "raw_url": {
+          "rawUrl": {
             "type": "string",
             "nullable": true
           },
-          "site_name": {
+          "siteName": {
             "type": "string",
             "nullable": true
           },
-          "thumbnail_url": {
+          "thumbnailUrl": {
             "type": "string",
             "nullable": true
           },
@@ -1819,6 +3588,111 @@
           }
         }
       },
+      "RemovedResponse": {
+        "type": "object",
+        "required": [
+          "removed"
+        ],
+        "properties": {
+          "removed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ReorderRequest": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "RoleRequest": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string"
+          }
+        }
+      },
+      "RouteMetrics": {
+        "type": "object",
+        "required": [
+          "name",
+          "count",
+          "errors",
+          "samples"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "maxMs": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "p50Ms": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "p95Ms": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ScrapeResponse": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "faviconUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "imageUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "siteName": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
       "SearchQuery": {
         "type": "object",
         "required": [
@@ -1829,7 +3703,7 @@
             "type": "string",
             "nullable": true
           },
-          "folder_id": {
+          "folderId": {
             "type": "string",
             "format": "uuid",
             "nullable": true
@@ -1878,10 +3752,10 @@
           "title",
           "score",
           "tags",
-          "created_at"
+          "createdAt"
         ],
         "properties": {
-          "created_at": {
+          "createdAt": {
             "type": "string",
             "format": "date-time"
           },
@@ -1889,7 +3763,7 @@
             "type": "string",
             "nullable": true
           },
-          "favicon_url": {
+          "faviconUrl": {
             "type": "string",
             "nullable": true
           },
@@ -1897,11 +3771,11 @@
             "type": "string",
             "format": "uuid"
           },
-          "normalized_domain": {
+          "normalizedDomain": {
             "type": "string",
             "nullable": true
           },
-          "raw_url": {
+          "rawUrl": {
             "type": "string",
             "nullable": true
           },
@@ -1915,7 +3789,7 @@
               "$ref": "#/components/schemas/BookmarkTagSummary"
             }
           },
-          "thumbnail_url": {
+          "thumbnailUrl": {
             "type": "string",
             "nullable": true
           },
@@ -1924,15 +3798,61 @@
           }
         }
       },
+      "ServiceHealthResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "version"
+        ],
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionMetadata": {
+        "type": "object",
+        "required": [
+          "id",
+          "userId",
+          "expiresAt",
+          "createdAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "SessionResponse": {
         "type": "object",
         "required": [
           "token",
           "user",
-          "expires_at"
+          "expiresAt"
         ],
         "properties": {
-          "expires_at": {
+          "expiresAt": {
             "type": "string",
             "format": "date-time"
           },
@@ -1944,21 +3864,60 @@
           }
         }
       },
+      "ShareTokenResponse": {
+        "type": "object",
+        "properties": {
+          "shareToken": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "SignInSocialRequest": {
+        "type": "object",
+        "required": [
+          "provider"
+        ],
+        "properties": {
+          "callbackURL": {
+            "type": "string",
+            "nullable": true
+          },
+          "callbackUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
+      "StatusResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "TagDto": {
         "type": "object",
         "required": [
           "id",
           "name",
           "slug",
-          "bookmark_count",
-          "created_at"
+          "bookmarkCount",
+          "createdAt"
         ],
         "properties": {
-          "bookmark_count": {
+          "bookmarkCount": {
             "type": "integer",
             "format": "int64"
           },
-          "created_at": {
+          "createdAt": {
             "type": "string",
             "format": "date-time"
           },
@@ -1974,31 +3933,48 @@
           }
         }
       },
+      "TaskQueuedResponse": {
+        "type": "object",
+        "description": "A queued background task: `status` is always `PENDING` at creation.",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "TaskStatusDto": {
         "type": "object",
         "required": [
           "id",
           "kind",
           "status",
-          "total_items",
-          "processed_items",
-          "failed_items",
-          "created_at"
+          "totalItems",
+          "processedItems",
+          "failedItems",
+          "createdAt"
         ],
         "properties": {
-          "created_at": {
+          "createdAt": {
             "type": "string",
             "format": "date-time"
           },
-          "error_message": {
+          "errorMessage": {
             "type": "string",
             "nullable": true
           },
-          "failed_items": {
+          "failedItems": {
             "type": "integer",
             "format": "int32"
           },
-          "finished_at": {
+          "finishedAt": {
             "type": "string",
             "format": "date-time",
             "nullable": true
@@ -2010,14 +3986,14 @@
           "kind": {
             "type": "string"
           },
-          "processed_items": {
+          "processedItems": {
             "type": "integer",
             "format": "int32"
           },
           "status": {
             "type": "string"
           },
-          "total_items": {
+          "totalItems": {
             "type": "integer",
             "format": "int32"
           }
@@ -2026,24 +4002,120 @@
       "UpdateBookmarkRequest": {
         "type": "object",
         "properties": {
+          "baseRevision": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
           "description": {
             "type": "string",
             "nullable": true
           },
-          "folder_id": {
+          "folderId": {
             "type": "string",
             "format": "uuid",
             "nullable": true
           },
-          "is_archived": {
+          "isArchived": {
             "type": "boolean",
             "nullable": true
           },
-          "is_favorite": {
+          "isFavorite": {
             "type": "boolean",
             "nullable": true
           },
-          "is_pinned": {
+          "isPinned": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "notesPlain": {
+            "type": "string",
+            "nullable": true
+          },
+          "saveId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "setFolder": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "thumbnailUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "url": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "UpdateFolderRequest": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Absent: unchanged. null or empty: clear. Max 500 characters (checked in the service).",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "parentId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Absent: unchanged. null: move to root. uuid: new parent.",
+            "nullable": true
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          }
+        }
+      },
+      "UpdateNoteRequest": {
+        "type": "object",
+        "required": [
+          "baseRevision"
+        ],
+        "properties": {
+          "baseRevision": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "document": {
+            "type": "object",
+            "nullable": true
+          },
+          "folderId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "plainText": {
+            "type": "string",
+            "nullable": true
+          },
+          "saveId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "setFolder": {
             "type": "boolean",
             "nullable": true
           },
@@ -2060,51 +4132,42 @@
           }
         }
       },
-      "UpdateFolderRequest": {
+      "UpdateUserRequest": {
         "type": "object",
         "properties": {
-          "description": {
+          "avatarUrl": {
             "type": "string",
             "nullable": true
           },
           "name": {
             "type": "string",
             "nullable": true
-          },
-          "parent_id": {
-            "type": "string",
-            "format": "uuid",
-            "nullable": true
-          },
-          "position": {
-            "type": "integer",
-            "format": "int32",
-            "nullable": true
           }
         }
       },
-      "UpdateNoteRequest": {
+      "UpdatedResponse": {
         "type": "object",
         "required": [
-          "base_revision"
+          "updated"
         ],
         "properties": {
-          "base_revision": {
-            "type": "integer",
-            "format": "int32"
+          "updated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UserActionResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
           },
-          "document": {
-            "type": "object",
-            "nullable": true
-          },
-          "plain_text": {
-            "type": "string",
-            "nullable": true
-          },
-          "save_id": {
-            "type": "string",
-            "format": "uuid",
-            "nullable": true
+          "success": {
+            "type": "boolean"
           }
         }
       }
@@ -2142,6 +4205,10 @@
     {
       "name": "tasks",
       "description": "Background task tracking"
+    },
+    {
+      "name": "users",
+      "description": "User profile and account management"
     }
   ]
 }

@@ -11,6 +11,10 @@ use super::dto::{SearchQuery, SearchResponse};
 use super::service::SearchService;
 
 pub fn router() -> Router<PgPool> {
+    router_routes().layer(axum::middleware::from_fn(crate::infra::camel::camelize_json))
+}
+
+fn router_routes() -> Router<PgPool> {
     Router::new().route("/", get(search_handler))
 }
 

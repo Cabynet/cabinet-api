@@ -2,8 +2,8 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::db::create_db_pool,
     modules::{
         auth::{
@@ -23,13 +23,8 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_html_import_with_nested_folders_and_export_roundtrip() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
-
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => return,
-    };
+    let config = common::config();
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
 
     let app = axum::Router::new()
         .nest("/v1/auth", auth_router())
@@ -79,11 +74,17 @@ async fn test_html_import_with_nested_folders_and_export_roundtrip() {
 
     // 3. Test TasksService Import
     let tasks_service = TasksService::new(pool.clone(), None);
-    let task_dto = tasks_service
+    let mut task_dto = tasks_service
         .import_html(session.user.id, sample_html)
         .await
         .unwrap();
 
+    assert_eq!(task_dto.status, "PENDING");
+    for _ in 0..500 {
+        task_dto = tasks_service.get_task_status(session.user.id, task_dto.id).await.unwrap();
+        if matches!(task_dto.status.as_str(), "COMPLETED" | "FAILED") { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     assert_eq!(task_dto.kind, "IMPORT_HTML");
     assert_eq!(task_dto.status, "COMPLETED");
     assert_eq!(task_dto.total_items, 3);

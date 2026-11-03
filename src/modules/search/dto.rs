@@ -6,8 +6,10 @@ use uuid::Uuid;
 use crate::modules::bookmarks::dto::BookmarkTagSummary;
 
 #[derive(Debug, Deserialize, utoipa::IntoParams, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchQuery {
     pub q: String,
+    #[serde(alias = "folder_id")]
     pub folder_id: Option<Uuid>,
     pub tag: Option<String>,
     pub domain: Option<String>,
@@ -15,6 +17,7 @@ pub struct SearchQuery {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchResultItem {
     pub id: Uuid,
     pub title: String,
@@ -29,6 +32,7 @@ pub struct SearchResultItem {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchResponse {
     pub query: String,
     pub total: usize,

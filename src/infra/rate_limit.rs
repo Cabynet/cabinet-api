@@ -6,7 +6,6 @@ use axum::{
     Json,
 };
 use redis::aio::ConnectionManager;
-use redis::AsyncCommands;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -24,7 +23,13 @@ pub struct RateLimitConfig {
 impl RateLimitConfig {
     pub const AUTH: Self = Self {
         prefix: "auth",
-        max_requests: 10,
+        max_requests: 15,
+        window_seconds: 60,
+    };
+
+    pub const MEDIA: Self = Self {
+        prefix: "media",
+        max_requests: 300,
         window_seconds: 60,
     };
 
@@ -42,7 +47,7 @@ impl RateLimitConfig {
 
     pub const GENERAL: Self = Self {
         prefix: "general",
-        max_requests: 120,
+        max_requests: 180,
         window_seconds: 60,
     };
 }
@@ -64,14 +69,23 @@ impl RedisRateLimiter {
         max_requests: i64,
         window_seconds: i64,
     ) -> Result<RateLimitStatus, redis::RedisError> {
-        let count: i64 = redis.incr(key, 1).await?;
-
-        if count == 1 {
-            let _: Result<(), redis::RedisError> = redis.expire(key, window_seconds).await;
-        }
-
-        let ttl: i64 = redis.ttl(key).await.unwrap_or(window_seconds);
-        let reset_seconds = if ttl > 0 { ttl } else { window_seconds };
+        // Keep increment and expiry atomic, and repair legacy counters without a TTL.
+        let (count, ttl): (i64, i64) = redis::Script::new(
+            r#"
+            local count = redis.call('INCR', KEYS[1])
+            local ttl = redis.call('TTL', KEYS[1])
+            if ttl < 0 then
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+                ttl = tonumber(ARGV[1])
+            end
+            return {count, ttl}
+            "#,
+        )
+        .key(key)
+        .arg(window_seconds)
+        .invoke_async(redis)
+        .await?;
+        let reset_seconds = ttl.max(1);
 
         let allowed = count <= max_requests;
         let remaining = (max_requests - count).max(0);
@@ -85,9 +99,10 @@ impl RedisRateLimiter {
     }
 }
 
-pub fn extract_client_identifier(req: &Request) -> String {
+pub fn extract_client_identifier(req: &Request, by_ip_only: bool) -> String {
+    // Tokens are unvalidated here, so a caller can mint a fresh bucket per request; auth limits must use IP only.
     // 1. If Authorization header present, hash token as identifier
-    if let Some(auth_val) = req.headers().get(header::AUTHORIZATION) {
+    if let Some(auth_val) = req.headers().get(header::AUTHORIZATION).filter(|_| !by_ip_only) {
         if let Ok(s) = auth_val.to_str() {
             if let Some(tok) = s.strip_prefix("Bearer ") {
                 let mut hasher = Sha256::new();
@@ -98,7 +113,7 @@ pub fn extract_client_identifier(req: &Request) -> String {
     }
 
     // 2. If cookie present, hash cookie token as identifier
-    if let Some(cookie_val) = req.headers().get(header::COOKIE) {
+    if let Some(cookie_val) = req.headers().get(header::COOKIE).filter(|_| !by_ip_only) {
         if let Ok(s) = cookie_val.to_str() {
             for part in s.split(';') {
                 if let Some(tok) = part.trim().strip_prefix("cabinet_session=") {
@@ -110,8 +125,9 @@ pub fn extract_client_identifier(req: &Request) -> String {
         }
     }
 
-    // 3. Fallback to Client IP headers
-    for header_name in ["cf-connecting-ip", "x-real-ip", "x-forwarded-for"] {
+    // 3. Forwarded-for headers are client-controlled unless a trusted reverse proxy sets them.
+    let trusted_proxy = std::env::var("TRUSTED_PROXY").is_ok_and(|v| v == "true");
+    for header_name in ["cf-connecting-ip", "x-real-ip", "x-forwarded-for"].into_iter().filter(|_| trusted_proxy) {
         if let Some(val) = req.headers().get(header_name) {
             if let Ok(s) = val.to_str() {
                 let ip = s.split(',').next().unwrap_or("").trim();
@@ -120,6 +136,11 @@ pub fn extract_client_identifier(req: &Request) -> String {
                 }
             }
         }
+    }
+
+    // 4. Fallback to TCP ConnectInfo<SocketAddr>
+    if let Some(connect_info) = req.extensions().get::<axum::extract::ConnectInfo<std::net::SocketAddr>>() {
+        return format!("ip:{}", connect_info.0.ip());
     }
 
     "ip:unknown".to_string()
@@ -131,10 +152,23 @@ pub async fn rate_limit_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    let client_id = extract_client_identifier(&req);
-    let key = format!("cabinet:ratelimit:{}:{}", config.prefix, client_id);
+    let effective_config = if config.prefix == RateLimitConfig::GENERAL.prefix {
+        let path = req.uri().path();
+        if path.ends_with("/proxy-image") {
+            RateLimitConfig::MEDIA
+        } else if path == "/v1/auth/login" || path == "/v1/auth/register" {
+            RateLimitConfig::AUTH
+        } else {
+            config
+        }
+    } else {
+        config
+    };
 
-    match RedisRateLimiter::check_limit(&mut redis, &key, config.max_requests, config.window_seconds).await {
+    let client_id = extract_client_identifier(&req, effective_config.prefix == RateLimitConfig::AUTH.prefix);
+    let key = format!("cabinet:ratelimit:{}:{}", effective_config.prefix, client_id);
+
+    match RedisRateLimiter::check_limit(&mut redis, &key, effective_config.max_requests, effective_config.window_seconds).await {
         Ok(status) => {
             if !status.allowed {
                 let mut headers = HeaderMap::new();
@@ -162,7 +196,7 @@ pub async fn rate_limit_middleware(
                         "error": {
                             "code": "RATE_LIMIT_EXCEEDED",
                             "message": "Too many requests. Please slow down and try again later.",
-                            "retry_after_seconds": status.reset_seconds
+                            "retryAfterSeconds": status.reset_seconds
                         }
                     })),
                 )

@@ -4,6 +4,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskStatusDto {
     pub id: Uuid,
     pub kind: String,

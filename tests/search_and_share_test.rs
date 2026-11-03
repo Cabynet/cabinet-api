@@ -2,8 +2,8 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::db::create_db_pool,
     modules::{
         auth::{
@@ -29,13 +29,8 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_postgres_search_and_public_folder_share() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
-
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => return,
-    };
+    let config = common::config();
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
 
     let app = axum::Router::new()
         .nest("/v1/auth", auth_router())
@@ -81,6 +76,7 @@ async fn test_postgres_search_and_public_folder_share() {
                 item_type: Some("LINK".to_string()),
                 client_request_id: Some(Uuid::now_v7()),
                 tags: None,
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -101,6 +97,7 @@ async fn test_postgres_search_and_public_folder_share() {
                 item_type: Some("LINK".to_string()),
                 client_request_id: Some(Uuid::now_v7()),
                 tags: None,
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -173,6 +170,7 @@ async fn test_postgres_search_and_public_folder_share() {
                 item_type: Some("LINK".to_string()),
                 client_request_id: Some(Uuid::now_v7()),
                 tags: None,
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -194,6 +192,7 @@ async fn test_postgres_search_and_public_folder_share() {
                 item_type: Some("NOTE".to_string()),
                 client_request_id: Some(Uuid::now_v7()),
                 tags: None,
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -212,7 +211,7 @@ async fn test_postgres_search_and_public_folder_share() {
     assert_eq!(resp_share.status(), StatusCode::OK);
     let share_bytes = axum::body::to_bytes(resp_share.into_body(), 1024 * 64).await.unwrap();
     let share_info: serde_json::Value = serde_json::from_slice(&share_bytes).unwrap();
-    let token = share_info["share_token"].as_str().unwrap();
+    let token = share_info["shareToken"].as_str().unwrap();
 
     // 6. Access Public Share WITHOUT authentication
     let public_access_req = Request::builder()

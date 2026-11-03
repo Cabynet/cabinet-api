@@ -5,67 +5,48 @@ use uuid::Uuid;
 use validator::Validate;
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct FolderDto {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
     pub parent_id: Option<Uuid>,
+    pub access: String,
     pub position: i32,
     pub share_enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Validate, Clone, ToSchema)]
+#[derive(Debug, Default, Serialize, Deserialize, Validate, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateFolderRequest {
-    pub name: Option<String>,
+    #[validate(length(min = 1, max = 120, message = "Folder name must be between 1 and 120 characters"))]
+    pub name: String,
+    #[validate(length(max = 500, message = "Description must not exceed 500 characters"))]
     pub description: Option<String>,
+    #[serde(alias = "parent_id")]
     pub parent_id: Option<Uuid>,
-    #[serde(rename = "parentId")]
-    pub parent_id_camel: Option<Uuid>,
-    pub data: Option<Box<CreateFolderRequest>>,
 }
 
-impl CreateFolderRequest {
-    pub fn resolved(self) -> Self {
-        if let Some(inner) = self.data {
-            return inner.resolved();
-        }
-        let parent_id = self.parent_id.or(self.parent_id_camel);
-        Self {
-            name: self.name,
-            description: self.description,
-            parent_id,
-            parent_id_camel: parent_id,
-            data: None,
-        }
-    }
+/// Distinguishes an absent field (None: unchanged) from an explicit null (Some(None): clear).
+fn double_option<'de, T: Deserialize<'de>, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
 }
 
-#[derive(Debug, Serialize, Deserialize, Validate, Clone, ToSchema)]
+#[derive(Debug, Default, Serialize, Deserialize, Validate, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateFolderRequest {
+    #[validate(length(min = 1, max = 120, message = "Folder name must be between 1 and 120 characters"))]
     pub name: Option<String>,
-    pub description: Option<String>,
-    pub parent_id: Option<Uuid>,
-    #[serde(rename = "parentId")]
-    pub parent_id_camel: Option<Uuid>,
+    /// Absent: unchanged. null or empty: clear. Max 500 characters (checked in the service).
+    #[serde(default, deserialize_with = "double_option", skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    pub description: Option<Option<String>>,
+    /// Absent: unchanged. null: move to root. uuid: new parent.
+    #[serde(default, alias = "parent_id", deserialize_with = "double_option", skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Uuid>)]
+    pub parent_id: Option<Option<Uuid>>,
     pub position: Option<i32>,
-    pub data: Option<Box<UpdateFolderRequest>>,
 }
 
-impl UpdateFolderRequest {
-    pub fn resolved(self) -> Self {
-        if let Some(inner) = self.data {
-            return inner.resolved();
-        }
-        let parent_id = self.parent_id.or(self.parent_id_camel);
-        Self {
-            name: self.name,
-            description: self.description,
-            parent_id,
-            parent_id_camel: parent_id,
-            position: self.position,
-            data: None,
-        }
-    }
-}

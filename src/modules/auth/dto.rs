@@ -5,6 +5,26 @@ use uuid::Uuid;
 use validator::Validate;
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMetadata {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MeResponse {
+    pub id: Uuid,
+    pub email: String,
+    pub name: String,
+    pub avatar_url: Option<String>,
+    pub session: SessionMetadata,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthUser {
     pub id: Uuid,
     pub email: String,
@@ -30,6 +50,7 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionResponse {
     pub token: String,
     pub user: AuthUser,

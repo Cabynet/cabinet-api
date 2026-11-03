@@ -43,58 +43,33 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // 2. Load configuration
     let config = AppConfig::from_env()?;
+    cabinet_api::infra::proxy_sign::init()?;
 
     // 3. Connect to Database & Redis
-    tracing::info!("Connecting to PostgreSQL: {}", config.database_url);
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => {
-            tracing::info!("PostgreSQL connection established successfully");
-            if let Ok(migrator) = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await {
-                if let Err(e) = migrator.run(&p).await {
-                    tracing::warn!("Migration error: {}. Continuing...", e);
-                } else {
-                    tracing::info!("Database migrations applied successfully");
-                }
-            }
-            p
-        }
-        Err(e) => {
-            tracing::warn!("Could not connect to PostgreSQL immediately: {}. Proceeding in offline/development mode.", e);
-            // In dev without running PG, allow fallback or retry
-            match sqlx::postgres::PgPoolOptions::new()
-                .max_connections(1)
-                .acquire_timeout(Duration::from_millis(500))
-                .connect_lazy(&config.database_url)
-            {
-                Ok(lazy_p) => lazy_p,
-                Err(_) => return Err(e.into()),
-            }
-        }
-    };
+    tracing::info!("Connecting to PostgreSQL");
+    let pool = create_db_pool(&config).await?;
+    let migrations = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    sqlx::migrate::Migrator::new(migrations).await?.run(&pool).await?;
+    tracing::info!("PostgreSQL connected and migrations applied");
 
     let redis_res = create_redis_pool(&config).await;
     match redis_res {
         Ok(ref conn) => {
             tracing::info!("Redis connection established successfully");
-            cabinet_api::worker::spawn_worker_loop(pool.clone(), conn.clone());
-            tracing::info!("Tokio background worker loop spawned and listening to Redis queues");
+            let _ = conn;
         }
         Err(ref e) => tracing::warn!("Redis connection skipped or offline: {}", e),
     }
 
+    cabinet_api::worker::spawn_worker_loop(pool.clone(), redis_res.as_ref().ok().cloned());
+    modules::tasks::service::spawn_recovery(pool.clone());
+
     // 4. Configure CORS for Web, Extension, Tauri, and Mobile
+    let mut origins = vec![config.frontend_url.trim_end_matches('/').to_owned()];
+    origins.extend(std::env::var("CORS_ALLOWED_ORIGINS").unwrap_or_default().split(',').map(str::trim).filter(|s|!s.is_empty()).map(str::to_owned));
+    let cors_origins = origins.clone();
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(|origin, _| {
-            let s = origin.to_str().unwrap_or_default();
-            s.starts_with("http://localhost")
-                || s.starts_with("https://localhost")
-                || s.starts_with("chrome-extension://")
-                || s.starts_with("moz-extension://")
-                || s.starts_with("tauri://")
-                || s.ends_with(".cabinety.space")
-                || s.ends_with(".vercel.app")
-                || s.ends_with(".pages.dev")
-        }))
+        .allow_origin(AllowOrigin::predicate(move |origin, _| cors_origins.iter().any(|allowed|origin.as_bytes()==allowed.as_bytes())))
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -114,13 +89,17 @@ async fn main() -> Result<(), anyhow::Error> {
         .max_age(Duration::from_secs(3600));
 
     // 5. Mount API Routes (/v1)
+    modules::operations::init();
     let api_routes = Router::new()
+        .nest("/activity", modules::activity::router())
+        .nest("/operations", modules::operations::router())
         .nest("/auth", modules::auth::handlers::router())
         .nest("/bookmarks", modules::bookmarks::handlers::router())
         .nest("/folders", modules::folders::handlers::router())
         .nest("/tags", modules::tags::handlers::router())
         .nest("/notes", modules::notes::handlers::router())
         .nest("/media", modules::media::handlers::router())
+        .nest("/uploads", modules::media::handlers::uploads_router())
         .nest("/search", modules::search::handlers::router())
         .nest("/tasks", modules::tasks::handlers::router())
         .nest("/users", modules::users::handlers::router())
@@ -130,11 +109,11 @@ async fn main() -> Result<(), anyhow::Error> {
     let app_routes = Router::new()
         .merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", ApiDoc::openapi()))
         .route("/v1/health", get(|| async {
-            Json(serde_json::json!({
-                "status": "healthy",
-                "service": "cabinet-api",
-                "version": env!("CARGO_PKG_VERSION")
-            }))
+            Json(cabinet_api::modules::responses::ServiceHealthResponse {
+                status: "healthy".into(),
+                service: "cabinet-api".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+            })
         }))
         .nest("/v1", api_routes);
 
@@ -148,18 +127,41 @@ async fn main() -> Result<(), anyhow::Error> {
             )
         }))
     } else {
+        tracing::error!("Redis unavailable at boot: rate limiting is DISABLED until the API restarts");
         app_routes
     };
 
-    let app = app.layer(cors).layer(TraceLayer::new_for_http());
+    let app = app.layer(axum::middleware::from_fn(move |req: axum::extract::Request, next: axum::middleware::Next| {
+        let origins = origins.clone();
+        async move {
+            if !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+                if let Some(origin) = req.headers().get(header::ORIGIN) {
+                    if !origins.iter().any(|allowed|origin.as_bytes()==allowed.as_bytes()) {
+                        return axum::response::IntoResponse::into_response(cabinet_api::errors::AppError::Forbidden("Origin is not allowed".into()));
+                    }
+                }
+            }
+            let route = req.extensions().get::<axum::extract::MatchedPath>().map(|p|format!("{} {}",req.method(),p.as_str())).unwrap_or_else(||"unmatched".into());
+            let start = std::time::Instant::now();
+            let response = next.run(req).await;
+            modules::operations::record(route, response.status().as_u16(), start.elapsed().as_secs_f64()*1000.0);
+            response
+        }
+    }))
+    .layer(cors)
+    .layer(TraceLayer::new_for_http())
+    .layer(axum::extract::DefaultBodyLimit::max(60 * 1024 * 1024));
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!("Server listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }

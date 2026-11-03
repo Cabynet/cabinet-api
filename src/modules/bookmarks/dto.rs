@@ -4,95 +4,62 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
-#[derive(Debug, Serialize, Deserialize, Validate, Clone, ToSchema)]
+// camelCase is canonical; the snake_case aliases keep older clients working.
+#[derive(Debug, Default, Serialize, Deserialize, Validate, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateBookmarkRequest {
     pub url: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
+    #[serde(alias = "folder_id")]
     pub folder_id: Option<Uuid>,
-    #[serde(rename = "folderId")]
-    pub folder_id_camel: Option<Uuid>,
+    #[serde(alias = "type", alias = "item_type")]
     pub item_type: Option<String>,
-    #[serde(rename = "type")]
-    pub item_type_alias: Option<String>,
+    #[serde(alias = "client_request_id")]
     pub client_request_id: Option<Uuid>,
-    #[serde(rename = "clientRequestId")]
-    pub client_request_id_camel: Option<Uuid>,
     pub tags: Option<Vec<String>>,
-    pub data: Option<Box<CreateBookmarkRequest>>,
+    #[serde(alias = "note_document")]
+    pub note_document: Option<serde_json::Value>,
+    #[serde(alias = "notes", alias = "notes_plain")]
+    pub notes_plain: Option<String>,
+    pub drawing: Option<serde_json::Value>,
+    #[serde(alias = "imageUrl", alias = "thumbnail_url")]
+    pub thumbnail_url: Option<String>,
+    #[serde(alias = "favicon_url")]
+    pub favicon_url: Option<String>,
+    #[serde(alias = "content_type")]
+    pub content_type: Option<String>,
 }
 
-impl CreateBookmarkRequest {
-    pub fn resolved(self) -> Self {
-        if let Some(inner) = self.data {
-            return inner.resolved();
-        }
-        let folder_id = self.folder_id.or(self.folder_id_camel);
-        let item_type = self.item_type.or(self.item_type_alias);
-        let client_request_id = self.client_request_id.or(self.client_request_id_camel);
-        Self {
-            url: self.url,
-            title: self.title,
-            description: self.description,
-            folder_id,
-            folder_id_camel: folder_id,
-            item_type: item_type.clone(),
-            item_type_alias: item_type,
-            client_request_id,
-            client_request_id_camel: client_request_id,
-            tags: self.tags,
-            data: None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Validate, Clone, ToSchema)]
+#[derive(Debug, Default, Serialize, Deserialize, Validate, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateBookmarkRequest {
+    pub url: Option<String>,
+    #[serde(alias = "notes_plain")]
+    pub notes_plain: Option<String>,
+    #[serde(alias = "base_revision")]
+    pub base_revision: Option<i32>,
+    #[serde(alias = "save_id")]
+    pub save_id: Option<Uuid>,
+    #[serde(alias = "set_folder")]
+    pub set_folder: Option<bool>,
     pub title: Option<String>,
     pub description: Option<String>,
+    #[serde(alias = "folder_id")]
     pub folder_id: Option<Uuid>,
-    #[serde(rename = "folderId")]
-    pub folder_id_camel: Option<Uuid>,
+    #[serde(alias = "is_pinned")]
     pub is_pinned: Option<bool>,
-    #[serde(rename = "isPinned")]
-    pub is_pinned_camel: Option<bool>,
+    #[serde(alias = "is_favorite")]
     pub is_favorite: Option<bool>,
-    #[serde(rename = "isFavorite")]
-    pub is_favorite_camel: Option<bool>,
+    #[serde(alias = "is_archived")]
     pub is_archived: Option<bool>,
-    #[serde(rename = "isArchived")]
-    pub is_archived_camel: Option<bool>,
     pub tags: Option<Vec<String>>,
-    pub data: Option<Box<UpdateBookmarkRequest>>,
-}
-
-impl UpdateBookmarkRequest {
-    pub fn resolved(self) -> Self {
-        if let Some(inner) = self.data {
-            return inner.resolved();
-        }
-        let folder_id = self.folder_id.or(self.folder_id_camel);
-        let is_pinned = self.is_pinned.or(self.is_pinned_camel);
-        let is_favorite = self.is_favorite.or(self.is_favorite_camel);
-        let is_archived = self.is_archived.or(self.is_archived_camel);
-        Self {
-            title: self.title,
-            description: self.description,
-            folder_id,
-            folder_id_camel: folder_id,
-            is_pinned,
-            is_pinned_camel: is_pinned,
-            is_favorite,
-            is_favorite_camel: is_favorite,
-            is_archived,
-            is_archived_camel: is_archived,
-            tags: self.tags,
-            data: None,
-        }
-    }
+    #[serde(alias = "imageUrl", alias = "thumbnail_url")]
+    pub thumbnail_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BookmarkTagSummary {
     pub id: Uuid,
     pub name: String,
@@ -100,8 +67,11 @@ pub struct BookmarkTagSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BookmarkListItem {
     pub id: Uuid,
+    pub user_id: Uuid,
+    pub access: String,
     pub item_type: String,
     pub raw_url: Option<String>,
     pub normalized_domain: Option<String>,
@@ -110,56 +80,67 @@ pub struct BookmarkListItem {
     pub site_name: Option<String>,
     pub thumbnail_url: Option<String>,
     pub favicon_url: Option<String>,
+    pub content_type: Option<String>,
     pub is_pinned: bool,
     pub is_favorite: bool,
     pub is_archived: bool,
     pub folder_id: Option<Uuid>,
     pub metadata_status: String,
+    pub metadata_error: Option<String>,
+    pub notes_plain: Option<String>,
+    pub note_document: Option<serde_json::Value>,
+    pub note_revision: i32,
+    pub drawing: Option<serde_json::Value>,
+    pub position: i32,
     pub tags: Vec<BookmarkTagSummary>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Deserialize, utoipa::IntoParams, ToSchema)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ListBookmarksQuery {
+    #[serde(alias = "folder_id")]
     pub folder_id: Option<Uuid>,
     pub tag: Option<String>,
     pub domain: Option<String>,
+    #[serde(alias = "is_archived")]
     pub is_archived: Option<bool>,
+    #[serde(alias = "is_favorite")]
     pub is_favorite: Option<bool>,
+    pub trash: Option<bool>,
+    pub status: Option<String>,
+    pub search: Option<String>,
+    #[serde(rename = "type")]
+    pub item_type: Option<String>,
+    #[serde(alias = "content_type")]
+    pub content_type: Option<String>,
+    #[serde(alias = "added_after")]
+    pub added_after: Option<DateTime<Utc>>,
+    #[serde(alias = "added_before")]
+    pub added_before: Option<DateTime<Utc>>,
+    pub sort: Option<String>,
+    pub summary: Option<bool>,
     pub cursor: Option<String>,
     pub limit: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BookmarkListResponse {
     pub items: Vec<BookmarkListItem>,
     pub next_cursor: Option<String>,
     pub has_more: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BookmarkCursor {
-    pub is_pinned: bool,
-    pub created_at: DateTime<Utc>,
-    pub id: Uuid,
-}
-
-impl BookmarkCursor {
-    pub fn encode(&self) -> String {
-        let json = serde_json::to_string(self).unwrap_or_default();
-        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, json)
-    }
-
-    pub fn decode(encoded: &str) -> Option<Self> {
-        let bytes = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, encoded).ok()?;
-        serde_json::from_slice(&bytes).ok()
-    }
+    pub total_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct BookmarkPreviewDto {
     pub id: Uuid,
+    pub raw_url: Option<String>,
+    pub updated_at: DateTime<Utc>,
     pub metadata_status: String,
     pub title: String,
     pub description: Option<String>,
@@ -167,49 +148,19 @@ pub struct BookmarkPreviewDto {
     pub favicon_url: Option<String>,
     pub site_name: Option<String>,
 }
-
 #[derive(Debug, Deserialize, utoipa::IntoParams, ToSchema)]
-pub struct BookmarkPreviewsQuery {
-    pub ids: String,
-}
-
+pub struct BookmarkPreviewsQuery { pub ids: String }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct BookmarkPreviewsResponse {
-    pub previews: Vec<BookmarkPreviewDto>,
-}
-
+pub struct BookmarkPreviewsResponse { pub previews: Vec<BookmarkPreviewDto> }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct DuplicateItemDto {
-    pub id: Uuid,
-    pub title: String,
-    pub created_at: DateTime<Utc>,
-}
-
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateGroupDto { pub url: String, pub domain: Option<String>, pub count: usize, pub items: Vec<BookmarkListItem> }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct DuplicateGroupDto {
-    pub url: String,
-    pub domain: Option<String>,
-    pub count: usize,
-    pub items: Vec<DuplicateItemDto>,
-}
-
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateReportResponse { pub total_duplicate_groups: usize, pub total_redundant_items: usize, pub groups: Vec<DuplicateGroupDto> }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct DuplicateReportResponse {
-    pub total_duplicate_groups: usize,
-    pub total_redundant_items: usize,
-    pub groups: Vec<DuplicateGroupDto>,
-}
-
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateCleanupResponse { pub cleaned_items: usize, pub message: String }
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct DuplicateCleanupResponse {
-    pub cleaned_items: usize,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct LinkHealthCheckResponse {
-    pub id: Uuid,
-    pub url: Option<String>,
-    pub link_health: String,
-    pub http_status_code: Option<i16>,
-}
+#[serde(rename_all = "camelCase")]
+pub struct LinkHealthCheckResponse { pub id: Uuid, pub url: Option<String>, pub link_health: String, pub http_status_code: Option<i16> }

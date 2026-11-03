@@ -5,6 +5,7 @@ use uuid::Uuid;
 use validator::Validate;
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TagDto {
     pub id: Uuid,
     pub name: String,

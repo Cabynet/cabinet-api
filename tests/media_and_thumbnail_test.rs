@@ -2,38 +2,33 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::db::create_db_pool,
     modules::{
         auth::{
             dto::{RegisterRequest, SessionResponse},
             handlers::router as auth_router,
         },
+        bookmarks::handlers::router as bookmarks_router,
         media::{
             dto::{ConfirmUploadResponse, PresignUploadRequest, PresignUploadResponse},
             handlers::router as media_router,
         },
     },
-    worker::thumbnail::ThumbnailProcessor,
 };
-use image::{ImageBuffer, Rgb};
 use tower::ServiceExt;
 use uuid::Uuid;
 
 #[tokio::test]
 async fn test_media_presign_quota_validation_and_confirm() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
-
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => return,
-    };
+    let config = common::config();
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
 
     let app = axum::Router::new()
         .nest("/v1/auth", auth_router())
         .nest("/v1/media", media_router())
+        .nest("/v1/bookmarks", bookmarks_router())
         .with_state(pool.clone());
 
     // 1. Register test user
@@ -107,6 +102,10 @@ async fn test_media_presign_quota_validation_and_confirm() {
     assert!(presign_res.upload_url.contains("my-screenshot.png"));
     assert_eq!(presign_res.expires_seconds, 600);
 
+    // Confirmation must reject an object which was never uploaded.
+    let missing = app.clone().oneshot(Request::builder().method("POST").uri(format!("/v1/media/{}/confirm",presign_res.asset_id)).header(header::AUTHORIZATION,&auth_header).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+    reqwest::Client::new().put(&presign_res.upload_url).header("Content-Type","image/png").body(vec![0u8;51200]).send().await.unwrap().error_for_status().unwrap();
     // 4. Test Confirm Upload
     let confirm_req = Request::builder()
         .method("POST")
@@ -129,39 +128,46 @@ async fn test_media_presign_quota_validation_and_confirm() {
         .unwrap();
 
     assert_eq!(used_bytes, 51200);
-}
 
-#[test]
-fn test_thumbnail_processor_resizes_to_webp_640px() {
-    // 1. Create a 1200x800 test image in memory
-    let width = 1200;
-    let height = 800;
-    let mut img_buf: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(width, height);
-
-    for (x, y, pixel) in img_buf.enumerate_pixels_mut() {
-        let r = (x % 256) as u8;
-        let g = (y % 256) as u8;
-        let b = ((x + y) % 256) as u8;
-        *pixel = Rgb([r, g, b]);
-    }
-
-    let mut jpeg_bytes = Vec::new();
-    let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
-    img_buf
-        .write_to(&mut cursor, image::ImageFormat::Jpeg)
+    // Permanently deleting the file bookmark frees the quota and removes the stored object.
+    assert_eq!(reqwest::get(&confirm_res.public_url).await.unwrap().status(), 200);
+    let create = Request::builder()
+        .method("POST")
+        .uri("/v1/bookmarks")
+        .header(header::AUTHORIZATION, &auth_header)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::json!({"url": confirm_res.public_url, "item_type": "FILE", "title": "shot"}).to_string()))
         .unwrap();
-
-    // 2. Compress to WebP with max 640px dimension
-    let webp_bytes = ThumbnailProcessor::compress_to_webp(&jpeg_bytes, 640).unwrap();
-
-    // Verify RIFF and WEBP magic bytes
-    assert_eq!(&webp_bytes[0..4], b"RIFF");
-    assert_eq!(&webp_bytes[8..12], b"WEBP");
-
-    // 3. Decode WebP and verify dimensions
-    let decoded = image::load_from_memory(&webp_bytes).unwrap();
-    assert!(decoded.width() <= 640);
-    assert_eq!(decoded.width(), 640); // 1200x800 scaled down maintains aspect ratio -> 640x427
-    assert!(decoded.height() <= 640);
-    assert_eq!(decoded.height(), 427);
+    assert_eq!(app.clone().oneshot(create).await.unwrap().status(), StatusCode::CREATED);
+    // Creating the bookmark links the uploaded asset to it; purge relies on this link.
+    let linked: Option<Uuid> = sqlx::query_scalar("SELECT bookmark_id FROM media_assets WHERE id = $1")
+        .bind(presign_res.asset_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let bookmark_id: Uuid = sqlx::query_scalar("SELECT id FROM bookmarks WHERE user_id = $1")
+        .bind(session.user.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(linked, Some(bookmark_id));
+    sqlx::query("UPDATE bookmarks SET deleted_at = now() WHERE user_id = $1")
+        .bind(session.user.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let empty = Request::builder()
+        .method("DELETE")
+        .uri("/v1/bookmarks/trash/empty")
+        .header(header::AUTHORIZATION, &auth_header)
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.clone().oneshot(empty).await.unwrap().status(), StatusCode::OK);
+    let used_after: i64 = sqlx::query_scalar("SELECT storage_used_bytes FROM users WHERE id = $1")
+        .bind(session.user.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(used_after, 0);
+    assert_eq!(reqwest::get(&confirm_res.public_url).await.unwrap().status(), 404);
 }

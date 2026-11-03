@@ -2,8 +2,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::{db::create_db_pool, redis::create_redis_pool},
     modules::auth::{
         dto::RegisterRequest,
@@ -18,22 +18,14 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_oauth_authorization_url_pkce_and_csrf_state() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
+    let mut config = common::config();
     config.google_client_id = "test-google-client-id.apps.googleusercontent.com".to_string();
     config.google_client_secret = "test-google-secret".to_string();
     config.github_client_id = "test-github-client-id".to_string();
     config.github_client_secret = "test-github-secret".to_string();
 
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-
-    let redis = match create_redis_pool(&config).await {
-        Ok(r) => r,
-        Err(_) => return,
-    };
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
+    let redis = create_redis_pool(&config).await.expect("Isolated test Redis is required");
 
     let app = axum::Router::new()
         .nest("/v1/auth", auth_router())
@@ -46,7 +38,7 @@ async fn test_oauth_authorization_url_pkce_and_csrf_state() {
             "google",
             OAuthAuthorizeQuery {
                 client_type: Some("MOBILE".to_string()),
-                redirect_uri: Some("myapp://auth/callback".to_string()),
+                redirect_uri: Some("cabinet://auth/callback".to_string()),
                 format: Some("json".to_string()),
             },
         )
@@ -110,9 +102,13 @@ async fn test_oauth_authorization_url_pkce_and_csrf_state() {
         .await
         .unwrap();
 
+    // Automatic linking is allowed only after the existing email was verified.
+    sqlx::query("UPDATE users SET email_verified=true WHERE id=$1").bind(initial_session.user.id).execute(&pool).await.unwrap();
     // User subsequently logs in via OAuth with same email
     let oauth_user = oauth_service
         .find_or_create_oauth_user(
+            "github",
+            "gh-12345",
             &email,
             "Updated OAuth Name",
             Some("https://cdn.example.com/oauth_avatar.png".to_string()),
@@ -139,4 +135,61 @@ async fn test_oauth_authorization_url_pkce_and_csrf_state() {
 
     assert!(row.0.is_some());
     assert!(row.1); // email_verified: true
+
+    // 5. Linking goes through (provider, account id): the same GitHub account keeps its user even if the email changes.
+    let again = oauth_service
+        .find_or_create_oauth_user("github", "gh-12345", "renamed@example.com", "Whoever", None)
+        .await
+        .unwrap();
+    assert_eq!(again.id, initial_session.user.id);
+    let linked: i64 = sqlx::query_scalar("SELECT count(*) FROM oauth_accounts WHERE user_id = $1 AND provider = 'github'")
+        .bind(initial_session.user.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(linked, 1);
+
+    // 6. A password registered but never verified is dropped when the OAuth owner claims the email.
+    let victim_email = format!("victim_{}@example.com", Uuid::now_v7());
+    let squatter = auth_service
+        .register(
+            RegisterRequest { email: victim_email.clone(), password: "SquatterPass123!".to_string(), name: "Squatter".to_string() },
+            "WEB",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let claimed = oauth_service
+        .find_or_create_oauth_user("google", "g-777", &victim_email, "Victim", None)
+        .await
+        .unwrap();
+    assert_eq!(claimed.id, squatter.user.id);
+    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(claimed.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(hash.is_none(), "squatter's password must not survive the OAuth claim");
+
+    // 7. The callback only completes in the browser that started the flow (nonce cookie); state is single-use.
+    for nonce in [None, Some("not-the-nonce")] {
+        let web = oauth_service
+            .get_authorization_url(
+                "github",
+                OAuthAuthorizeQuery { client_type: Some("WEB".to_string()), redirect_uri: None, format: Some("json".to_string()) },
+            )
+            .await
+            .unwrap();
+        assert!(!web.nonce.is_empty());
+        let err = oauth_service
+            .handle_callback(
+                "github",
+                cabinet_api::modules::auth::oauth::OAuthCallbackQuery { code: Some("c".into()), state: Some(web.state), error: None },
+                nonce,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("does not belong to this browser"), "{err}");
+    }
 }

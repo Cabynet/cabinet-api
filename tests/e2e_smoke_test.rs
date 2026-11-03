@@ -2,8 +2,8 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::{db::create_db_pool, redis::create_redis_pool},
     modules::{
         auth::{
@@ -32,22 +32,14 @@ use cabinet_api::{
     worker::queue::{EnrichmentJob, WorkerProcessor},
 };
 use tower::ServiceExt;
+use redis::AsyncCommands;
 use uuid::Uuid;
 
 #[tokio::test]
 async fn test_complete_e2e_lifecycle_smoke_test() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
-
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-
-    let redis = match create_redis_pool(&config).await {
-        Ok(r) => r,
-        Err(_) => return,
-    };
+    let config = common::config();
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
+    let redis = create_redis_pool(&config).await.expect("Isolated test Redis is required");
 
     let app = axum::Router::new()
         .nest("/v1/auth", auth_router())
@@ -107,6 +99,7 @@ async fn test_complete_e2e_lifecycle_smoke_test() {
     let presign_bytes = axum::body::to_bytes(presign_resp.into_body(), 1024 * 64).await.unwrap();
     let presign_data: PresignUploadResponse = serde_json::from_slice(&presign_bytes).unwrap();
 
+    reqwest::Client::new().put(&presign_data.upload_url).header("Content-Type","application/pdf").body(vec![0u8;1048576]).send().await.unwrap().error_for_status().unwrap();
     let confirm_req = Request::builder()
         .method("POST")
         .uri(format!("/v1/media/{}/confirm", presign_data.asset_id))
@@ -174,6 +167,7 @@ async fn test_complete_e2e_lifecycle_smoke_test() {
                 item_type: Some("LINK".to_string()),
                 client_request_id: Some(client_req_id),
                 tags: Some(vec!["distributed-systems".to_string()]),
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -190,12 +184,15 @@ async fn test_complete_e2e_lifecycle_smoke_test() {
     // Step 5: Worker Enrichment Processing
     // ----------------------------------------------------
     let mut processor = WorkerProcessor::new(pool.clone(), redis.clone()).unwrap();
-    let raw_hash = bookmark.id.as_bytes().to_vec();
+    let norm = cabinet_api::modules::bookmarks::normalizer::normalize_url(bookmark.raw_url.as_deref().unwrap()).unwrap();
+    let mut cache = redis.clone();
+    let metadata = serde_json::json!({"title":"Cached title","description":"Cached description","image_url":"https://example.com/cover.webp","favicon_url":null,"site_name":"Example"});
+    let _: () = cache.set_ex(format!("meta:cache:{}",hex::encode(&norm.url_hash)),metadata.to_string(),300).await.unwrap();
     let job = EnrichmentJob {
         bookmark_id: bookmark.id,
         user_id: session.user.id,
-        url: "https://fly.io/blog/scaling-modular-monoliths/".to_string(),
-        url_hash: raw_hash,
+        url: norm.raw_url,
+        url_hash: norm.url_hash,
         attempt: 0,
     };
     // Direct job processing simulates background worker completing metadata
@@ -207,7 +204,7 @@ async fn test_complete_e2e_lifecycle_smoke_test() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert!(status == "COMPLETED" || status == "PENDING" || status == "FAILED");
+    assert_eq!(status, "COMPLETED");
 
     // ----------------------------------------------------
     // Step 6: Note Autosave & Conflict Prevention (409)
@@ -223,6 +220,7 @@ async fn test_complete_e2e_lifecycle_smoke_test() {
                 save_id: Some(Uuid::now_v7()),
                 document: Some(serde_json::json!({ "type": "doc", "blocks": ["Modular monolith notes"] })),
                 plain_text: Some("Key architectural takeaway: Keep high cohesive modules with strict boundary".to_string()),
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -246,6 +244,7 @@ async fn test_complete_e2e_lifecycle_smoke_test() {
                 save_id: Some(Uuid::now_v7()),
                 document: Some(serde_json::json!({ "type": "doc" })),
                 plain_text: Some("Stale edit".to_string()),
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -284,7 +283,7 @@ async fn test_complete_e2e_lifecycle_smoke_test() {
     let share_resp = app.clone().oneshot(share_req).await.unwrap();
     let share_bytes = axum::body::to_bytes(share_resp.into_body(), 1024 * 64).await.unwrap();
     let share_info: serde_json::Value = serde_json::from_slice(&share_bytes).unwrap();
-    let share_token = share_info["share_token"].as_str().unwrap();
+    let share_token = share_info["shareToken"].as_str().unwrap();
 
     let pub_req = Request::builder()
         .method("GET")

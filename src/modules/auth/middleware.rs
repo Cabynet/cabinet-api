@@ -5,11 +5,13 @@ use axum::{
 };
 use sqlx::PgPool;
 
-use crate::errors::AppError;
-use super::dto::AuthUser;
+use super::dto::{AuthUser, SessionMetadata};
 use super::service::AuthService;
+use super::SESSION_COOKIE_NAME;
+use crate::errors::AppError;
 
 pub struct CurrentUser(pub AuthUser);
+pub struct CurrentSession(pub SessionMetadata);
 pub struct OptionalCurrentUser(pub Option<AuthUser>);
 pub struct SessionToken(pub String);
 
@@ -27,13 +29,15 @@ pub fn extract_token_from_parts(parts: &Parts) -> Option<String> {
     }
 
     // 2. Check Cookie: cabinet_session=<token>
+    let cookie_prefix = format!("{}=", SESSION_COOKIE_NAME);
     if let Some(cookie_header) = parts.headers.get(header::COOKIE) {
         if let Ok(cookie_str) = cookie_header.to_str() {
             for cookie in cookie_str.split(';') {
                 let trimmed = cookie.trim();
-                if let Some(val) = trimmed.strip_prefix("cabinet_session=") {
-                    if !val.is_empty() {
-                        return Some(val.to_string());
+                if let Some(val) = trimmed.strip_prefix(&cookie_prefix) {
+                    let token = val.trim();
+                    if !token.is_empty() {
+                        return Some(token.to_string());
                     }
                 }
             }
@@ -47,7 +51,7 @@ pub fn extract_token_from_parts(parts: &Parts) -> Option<String> {
 impl<S> FromRequestParts<S> for CurrentUser
 where
     S: Send + Sync,
-    PgPool: axum::extract::FromRef<S>,
+    PgPool: FromRef<S>,
 {
     type Rejection = AppError;
 
@@ -57,9 +61,29 @@ where
             .ok_or_else(|| AppError::Unauthorized("Authentication required".to_string()))?;
 
         let auth_service = AuthService::new(pool);
-        let user = auth_service.validate_session_token(&token).await?;
+        let (user, _) = auth_service.validate_session_token(&token).await?;
 
         Ok(CurrentUser(user))
+    }
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for CurrentSession
+where
+    S: Send + Sync,
+    PgPool: FromRef<S>,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let pool = PgPool::from_ref(state);
+        let token = extract_token_from_parts(parts)
+            .ok_or_else(|| AppError::Unauthorized("Authentication required".to_string()))?;
+
+        let auth_service = AuthService::new(pool);
+        let (_, session) = auth_service.validate_session_token(&token).await?;
+
+        Ok(CurrentSession(session))
     }
 }
 
@@ -67,7 +91,7 @@ where
 impl<S> FromRequestParts<S> for OptionalCurrentUser
 where
     S: Send + Sync,
-    PgPool: axum::extract::FromRef<S>,
+    PgPool: FromRef<S>,
 {
     type Rejection = AppError;
 
@@ -75,7 +99,11 @@ where
         let pool = PgPool::from_ref(state);
         if let Some(token) = extract_token_from_parts(parts) {
             let auth_service = AuthService::new(pool);
-            let user = auth_service.validate_session_token(&token).await.ok();
+            let user = auth_service
+                .validate_session_token(&token)
+                .await
+                .ok()
+                .map(|(u, _)| u);
             Ok(OptionalCurrentUser(user))
         } else {
             Ok(OptionalCurrentUser(None))

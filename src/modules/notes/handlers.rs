@@ -8,10 +8,14 @@ use uuid::Uuid;
 
 use crate::errors::AppError;
 use crate::modules::auth::middleware::CurrentUser;
-use super::dto::{NoteConflictError, NoteResponse, UpdateNoteRequest};
+use super::dto::{NoteResponse, UpdateNoteRequest};
 use super::service::NotesService;
 
 pub fn router() -> Router<PgPool> {
+    router_routes().layer(axum::middleware::from_fn(crate::infra::camel::camelize_json))
+}
+
+fn router_routes() -> Router<PgPool> {
     Router::new().route("/:id", get(get_note_handler).put(update_note_handler))
 }
 

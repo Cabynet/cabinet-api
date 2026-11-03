@@ -1,5 +1,5 @@
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::{
         db::create_db_pool,
         http_client::SsrfSafeClient,
@@ -80,19 +80,13 @@ fn test_streaming_html_parser_extracts_metadata_correctly() {
 
 #[tokio::test]
 async fn test_worker_dual_queue_and_fill_missing_logic() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
+    let config = common::config();
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
+    let redis = create_redis_pool(&config).await.expect("Isolated test Redis is required");
 
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-
-    let redis = match create_redis_pool(&config).await {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-
+    // This suite owns its disposable Redis; remove queue hints left by earlier tests only.
+    let mut queues = redis.clone();
+    let _: usize = queues.del(&[QUEUE_INTERACTIVE, QUEUE_BULK]).await.unwrap();
     let mut processor = WorkerProcessor::new(pool.clone(), redis.clone()).unwrap();
 
     // 1. Create a user

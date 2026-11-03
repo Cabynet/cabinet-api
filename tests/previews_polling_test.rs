@@ -2,8 +2,8 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::db::create_db_pool,
     modules::{
         auth::{
@@ -21,13 +21,8 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_bookmark_previews_polling_endpoint() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
-
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => return,
-    };
+    let config = common::config();
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
 
     let app = axum::Router::new()
         .nest("/v1/auth", auth_router())
@@ -70,6 +65,7 @@ async fn test_bookmark_previews_polling_endpoint() {
                 item_type: Some("LINK".to_string()),
                 client_request_id: Some(Uuid::now_v7()),
                 tags: None,
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -93,6 +89,7 @@ async fn test_bookmark_previews_polling_endpoint() {
                 item_type: Some("LINK".to_string()),
                 client_request_id: Some(Uuid::now_v7()),
                 tags: None,
+                ..Default::default()
             })
             .unwrap(),
         ))

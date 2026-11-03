@@ -1,12 +1,21 @@
+use std::sync::OnceLock;
+use std::time::Duration;
+
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use std::time::Duration;
-use tracing::{error, info, warn};
+use tokio::sync::Notify;
+use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::infra::http_client::SsrfSafeClient;
 use super::enrichment::{ExtractedMetadata, MetadataExtractor};
+use crate::infra::http_client::SsrfSafeClient;
+
+static WAKE: OnceLock<Notify> = OnceLock::new();
+
+pub fn wake_workers() {
+    WAKE.get_or_init(Notify::new).notify_one();
+}
 
 pub const QUEUE_INTERACTIVE: &str = "cabinet:queue:interactive";
 pub const QUEUE_BULK: &str = "cabinet:queue:bulk";
@@ -22,199 +31,274 @@ pub struct EnrichmentJob {
 
 pub struct WorkerProcessor {
     pub pool: PgPool,
-    pub redis: redis::aio::ConnectionManager,
+    pub redis: Option<redis::aio::ConnectionManager>,
     pub extractor: MetadataExtractor,
 }
 
 impl WorkerProcessor {
-    pub fn new(pool: PgPool, redis: redis::aio::ConnectionManager) -> Result<Self, anyhow::Error> {
-        let http_client = SsrfSafeClient::new()?;
-        let extractor = MetadataExtractor::new(http_client);
+    pub fn new(
+        pool: PgPool,
+        redis: impl Into<Option<redis::aio::ConnectionManager>>,
+    ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             pool,
-            redis,
-            extractor,
+            redis: redis.into(),
+            extractor: MetadataExtractor::new(SsrfSafeClient::new()?),
         })
     }
 
     pub async fn process_job(&mut self, job: EnrichmentJob) {
-        let hash_hex = hex::encode(&job.url_hash);
-        let cache_key = format!("meta:cache:{}", hash_hex);
+        let claim = sqlx::query_scalar::<_, i32>(
+            r#"
+            UPDATE bookmarks
+            SET metadata_status = 'PROCESSING',
+                metadata_attempts = metadata_attempts + 1,
+                metadata_started_at = now()
+            WHERE id = $1
+              AND user_id = $2
+              AND raw_url = $3
+              AND deleted_at IS NULL
+              AND metadata_status = 'PENDING'
+              AND metadata_attempts < 3
+              AND (metadata_started_at IS NULL OR metadata_started_at <= now())
+            RETURNING metadata_attempts
+            "#,
+        )
+        .bind(job.bookmark_id)
+        .bind(job.user_id)
+        .bind(&job.url)
+        .fetch_optional(&self.pool)
+        .await;
 
-        info!(
-            bookmark_id = %job.bookmark_id,
-            url = %job.url,
-            attempt = job.attempt,
-            "Processing URL metadata enrichment job"
-        );
+        let attempt = match claim {
+            Ok(Some(n)) => n,
+            Ok(None) => return,
+            Err(e) => {
+                error!(error = ?e, "Metadata claim failed");
+                return;
+            }
+        };
 
-        // 1. Check Redis cache for deduplication
-        let cached_meta: Option<String> = self.redis.get(&cache_key).await.ok();
-        let metadata = if let Some(cached_str) = cached_meta {
-            serde_json::from_str::<ExtractedMetadata>(&cached_str).ok()
+        let key = format!("meta:cache:{}", hex::encode(&job.url_hash));
+        let cached: Option<String> = if let Some(redis) = &mut self.redis {
+            redis.get(&key).await.ok()
         } else {
             None
         };
 
-        let final_meta = match metadata {
-            Some(m) => {
-                info!(url = %job.url, "Loaded metadata from Redis cache");
-                Ok(m)
-            }
-            None => {
-                let fetch_res = self.extractor.fetch_and_extract(&job.url).await;
-                if let Ok(ref meta) = fetch_res {
-                    if let Ok(json_str) = serde_json::to_string(meta) {
-                        let _: Result<(), redis::RedisError> =
-                            self.redis.set_ex(&cache_key, json_str, 86400).await;
-                    }
-                }
-                fetch_res
-            }
+        let metadata = cached.and_then(|s| serde_json::from_str::<ExtractedMetadata>(&s).ok());
+        let result = match metadata {
+            Some(m) => Ok(m),
+            None => self.extractor.fetch_and_extract(&job.url).await,
         };
 
-        // 2. Database update: Fill-Missing, Never Overwrite User Intent
-        match final_meta {
+        let write = match result {
             Ok(meta) => {
-                let res = sqlx::query(
+                if let (Some(redis), Ok(encoded)) = (&mut self.redis, serde_json::to_string(&meta)) {
+                    let _: Result<(), _> = redis.set_ex(&key, encoded, 86400).await;
+                }
+
+                sqlx::query(
                     r#"
                     UPDATE bookmarks
-                    SET
-                        title = CASE WHEN user_edited_title THEN title ELSE COALESCE($2, title) END,
-                        description = CASE WHEN user_edited_desc THEN description ELSE COALESCE($3, description) END,
-                        thumbnail_url = COALESCE(thumbnail_url, $4),
-                        favicon_url = COALESCE(favicon_url, $5),
-                        site_name = COALESCE(site_name, $6),
+                    SET title = CASE WHEN user_edited_title THEN title ELSE coalesce($4, title) END,
+                        description = CASE WHEN user_edited_desc THEN description ELSE coalesce($5, description) END,
+                        thumbnail_url = coalesce(thumbnail_url, $6),
+                        favicon_url = coalesce(favicon_url, $7),
+                        site_name = coalesce(site_name, $8),
                         metadata_status = 'COMPLETED',
                         metadata_error = NULL,
-                        last_enriched_at = NOW(),
-                        updated_at = NOW()
-                    WHERE id = $1 AND deleted_at IS NULL
+                        last_enriched_at = now(),
+                        updated_at = now()
+                    WHERE id = $1
+                      AND user_id = $2
+                      AND raw_url = $3
+                      AND deleted_at IS NULL
+                      AND metadata_status = 'PROCESSING'
+                      AND metadata_attempts = $9
                     "#,
                 )
                 .bind(job.bookmark_id)
+                .bind(job.user_id)
+                .bind(&job.url)
                 .bind(meta.title)
                 .bind(meta.description)
                 .bind(meta.image_url)
                 .bind(meta.favicon_url)
                 .bind(meta.site_name)
+                .bind(attempt)
                 .execute(&self.pool)
-                .await;
-
-                if let Err(e) = res {
-                    error!(error = ?e, "Failed to update bookmark with enriched metadata");
-                } else {
-                    info!(bookmark_id = %job.bookmark_id, "Metadata enrichment completed successfully");
-                }
+                .await
             }
             Err(e) => {
-                let err_msg = e.to_string();
-                warn!(
-                    bookmark_id = %job.bookmark_id,
-                    error = %err_msg,
-                    "Enrichment extraction failed"
-                );
-
-                let res = sqlx::query(
+                let err_msg: String = e.to_string().chars().take(280).collect();
+                sqlx::query(
                     r#"
                     UPDATE bookmarks
-                    SET
-                        metadata_status = 'FAILED',
-                        metadata_error = $2,
-                        last_enriched_at = NOW(),
-                        updated_at = NOW()
-                    WHERE id = $1 AND deleted_at IS NULL
+                    SET metadata_status = CASE WHEN $4 < 3 THEN 'PENDING' ELSE 'FAILED' END,
+                        metadata_error = $5,
+                        metadata_started_at = now() + make_interval(secs => power(2, $4)::int),
+                        last_enriched_at = now(),
+                        updated_at = now()
+                    WHERE id = $1
+                      AND user_id = $2
+                      AND raw_url = $3
+                      AND deleted_at IS NULL
+                      AND metadata_status = 'PROCESSING'
+                      AND metadata_attempts = $4
                     "#,
                 )
                 .bind(job.bookmark_id)
-                .bind(err_msg.chars().take(280).collect::<String>())
+                .bind(job.user_id)
+                .bind(&job.url)
+                .bind(attempt)
+                .bind(err_msg)
                 .execute(&self.pool)
-                .await;
-
-                if let Err(db_err) = res {
-                    error!(error = ?db_err, "Failed to record enrichment error in DB");
-                }
+                .await
             }
+        };
+
+        if let Err(e) = write {
+            error!(error = ?e, "Metadata result could not be saved; stale claim recovery will retry");
         }
     }
 
-    /// Single poll step: pops from queue:interactive first, then queue:bulk
     pub async fn poll_and_process_one(&mut self) -> bool {
-        // Priority 1: Interactive Queue (Real-time saves)
-        let job_str: Option<String> = self.redis.rpop(QUEUE_INTERACTIVE, None).await.ok().flatten();
+        if let Some(redis) = &mut self.redis {
+            let interactive: Option<String> = redis.rpop(QUEUE_INTERACTIVE, None).await.ok().flatten();
+            let next = if interactive.is_some() {
+                interactive
+            } else {
+                redis.rpop(QUEUE_BULK, None).await.ok().flatten()
+            };
 
-        let job_str = match job_str {
-            Some(j) => Some(j),
-            // Priority 2: Bulk Queue (Imports & background sweeps)
-            None => self.redis.rpop(QUEUE_BULK, None).await.ok().flatten(),
-        };
-
-        if let Some(s) = job_str {
-            if let Ok(job) = serde_json::from_str::<EnrichmentJob>(&s) {
-                self.process_job(job).await;
-                return true;
+            if let Some(encoded) = next {
+                if let Ok(job) = serde_json::from_str(&encoded) {
+                    self.process_job(job).await;
+                    return true;
+                }
             }
+        }
+
+        // Redis is a wake-up hint; durable database rows recover lost jobs and outages.
+        let row = sqlx::query_as::<_, (Uuid, Uuid, String, Vec<u8>)>(
+            r#"
+            SELECT id, user_id, raw_url, url_hash
+            FROM bookmarks
+            WHERE metadata_status = 'PENDING'
+              AND item_type = 'LINK'
+              AND raw_url IS NOT NULL
+              AND url_hash IS NOT NULL
+              AND deleted_at IS NULL
+              AND metadata_attempts < 3
+              AND (metadata_started_at IS NULL OR metadata_started_at <= now())
+            ORDER BY created_at
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await;
+
+        if let Ok(Some((bookmark_id, user_id, url, url_hash))) = row {
+            self.process_job(EnrichmentJob {
+                bookmark_id,
+                user_id,
+                url,
+                url_hash,
+                attempt: 0,
+            })
+            .await;
+            return true;
         }
 
         false
     }
 }
 
+async fn run_worker(pool: PgPool, redis: Option<redis::aio::ConnectionManager>) {
+    let mut processor = match WorkerProcessor::new(pool, redis) {
+        Ok(p) => p,
+        Err(e) => {
+            error!(error = ?e, "Worker initialization failed");
+            return;
+        }
+    };
+
+    loop {
+        if !processor.poll_and_process_one().await {
+            tokio::select! {
+                _ = WAKE.get_or_init(Notify::new).notified() => {}
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
+        }
+    }
+}
+
+/// Waits for a worker to end (it only ends by panic or failed init) and returns whether to respawn it.
+async fn reap_worker(workers: &mut tokio::task::JoinSet<()>) -> bool {
+    match workers.join_next().await {
+        Some(Err(e)) => error!(error = ?e, "Metadata worker panicked; respawning"),
+        Some(Ok(())) => error!("Metadata worker exited; respawning"),
+        None => return false,
+    }
+    // Avoid a hot loop if the worker fails immediately every time.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    true
+}
+
 pub fn spawn_worker_loop(
     pool: PgPool,
-    redis: redis::aio::ConnectionManager,
+    redis: impl Into<Option<redis::aio::ConnectionManager>>,
 ) -> tokio::task::JoinHandle<()> {
+    let redis = redis.into();
+
     tokio::spawn(async move {
-        let processor_res = WorkerProcessor::new(pool, redis);
-        let mut processor = match processor_res {
-            Ok(p) => p,
-            Err(e) => {
-                error!(error = ?e, "Worker failed to initialize HTTP client");
-                return;
-            }
-        };
+        let concurrency = crate::config::AppConfig::shared()
+            .map(|c| c.interactive_worker_concurrency + c.bulk_worker_concurrency)
+            .unwrap_or(4)
+            .clamp(1, 16);
 
-        info!("Background worker loop started listening to Redis queues");
+        let mut workers = tokio::task::JoinSet::new();
+        for _ in 0..concurrency {
+            workers.spawn(run_worker(pool.clone(), redis.clone()));
+        }
 
-        // Startup recovery: enqueue any existing PENDING bookmarks into Redis
-        let pending_res = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Vec<u8>>)>(
-            r#"
-            SELECT id, user_id, raw_url, url_hash
-            FROM bookmarks
-            WHERE metadata_status = 'PENDING' AND raw_url IS NOT NULL AND deleted_at IS NULL
-            ORDER BY created_at DESC
-            LIMIT 500
-            "#,
-        )
-        .fetch_all(&processor.pool)
-        .await;
+        info!(concurrency, "Metadata workers started");
 
-        if let Ok(rows) = pending_res {
-            if !rows.is_empty() {
-                info!("Startup recovery: found {} pending bookmarks, enqueuing to Redis", rows.len());
-                for (id, user_id, raw_url, url_hash) in rows {
-                    if let (Some(u), Some(h)) = (raw_url, url_hash) {
-                        let job = EnrichmentJob {
-                            bookmark_id: id,
-                            user_id,
-                            url: u,
-                            url_hash: h,
-                            attempt: 0,
-                        };
-                        if let Ok(job_str) = serde_json::to_string(&job) {
-                            let _: Result<(), redis::RedisError> =
-                                processor.redis.lpush(QUEUE_INTERACTIVE, job_str).await;
-                        }
-                    }
+        let mut recovery = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            tokio::select! {
+                _ = recovery.tick() => {
+                    let _ = sqlx::query(
+                        r#"
+                        UPDATE bookmarks
+                        SET metadata_status = CASE WHEN metadata_attempts < 3 THEN 'PENDING' ELSE 'FAILED' END,
+                            metadata_error = 'Worker interrupted; recovery scheduled',
+                            metadata_started_at = NULL
+                        WHERE metadata_status = 'PROCESSING'
+                          AND metadata_started_at < now() - interval '2 minutes'
+                        "#,
+                    )
+                    .execute(&pool)
+                    .await;
+                }
+                true = reap_worker(&mut workers) => {
+                    workers.spawn(run_worker(pool.clone(), redis.clone()));
                 }
             }
         }
-
-        loop {
-            let processed = processor.poll_and_process_one().await;
-            if !processed {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panicked_worker_is_reaped_for_respawn() {
+        let mut workers = tokio::task::JoinSet::new();
+        assert!(!reap_worker(&mut workers).await, "no workers means nothing to respawn");
+        workers.spawn(async { panic!("worker bug") });
+        assert!(reap_worker(&mut workers).await);
+    }
 }

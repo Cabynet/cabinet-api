@@ -9,18 +9,22 @@ use chrono::Utc;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::config::AppConfig;
 use crate::errors::AppError;
-use crate::infra::redis::create_redis_pool;
 use crate::modules::auth::middleware::CurrentUser;
 use super::dto::TaskStatusDto;
 use super::service::TasksService;
 
 pub fn router() -> Router<PgPool> {
+    router_routes().layer(axum::middleware::from_fn(crate::infra::camel::camelize_json))
+}
+
+fn router_routes() -> Router<PgPool> {
     Router::new()
         .route("/import-html", post(import_html_handler))
         .route("/:id", get(get_task_status_handler))
+        .route("/:id/retry", post(retry_import))
         .route("/export-html", get(export_bookmarks_handler))
+        .layer(axum::extract::DefaultBodyLimit::max(60 * 1024 * 1024))
 }
 
 #[utoipa::path(
@@ -48,7 +52,7 @@ pub async fn get_task_status_handler(
     post,
     path = "/v1/tasks/import-html",
     responses(
-        (status = 201, description = "Import task queued and processed", body = TaskStatusDto)
+        (status = 202, description = "Durable import task accepted", body = TaskStatusDto)
     ),
     tag = "tasks"
 )]
@@ -57,9 +61,7 @@ pub async fn import_html_handler(
     CurrentUser(user): CurrentUser,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<TaskStatusDto>), AppError> {
-    let config = AppConfig::from_env().map_err(AppError::Internal)?;
-    let redis = create_redis_pool(&config).await.ok();
-    let service = TasksService::new(pool, redis);
+    let service = TasksService::new(pool, crate::infra::redis::shared().await);
 
     let mut html_content = String::new();
 
@@ -84,7 +86,7 @@ pub async fn import_html_handler(
     }
 
     let task = service.import_html(user.id, &html_content).await?;
-    Ok((StatusCode::CREATED, Json(task)))
+    Ok((StatusCode::ACCEPTED, Json(task)))
 }
 
 #[utoipa::path(
@@ -115,4 +117,64 @@ pub async fn export_bookmarks_handler(
     );
 
     Ok((StatusCode::OK, headers, html))
+}
+
+async fn retry_import(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<TaskStatusDto>, AppError> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(user.id)
+        .execute(&mut *tx)
+        .await?;
+
+    let active: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM background_tasks
+            WHERE user_id = $1 AND kind = 'IMPORT_HTML' AND status IN ('PENDING', 'RUNNING')
+        )
+        "#,
+    )
+    .bind(user.id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    if active {
+        return Err(AppError::Conflict("An import is already active".into()));
+    }
+
+    let r = sqlx::query(
+        r#"
+        UPDATE background_tasks
+        SET status = 'PENDING',
+            error_message = NULL,
+            finished_at = NULL,
+            updated_at = now()
+        WHERE id = $1
+          AND user_id = $2
+          AND kind = 'IMPORT_HTML'
+          AND status = 'FAILED'
+          AND payload IS NOT NULL
+        "#,
+    )
+    .bind(id)
+    .bind(user.id)
+    .execute(&mut *tx)
+    .await?;
+
+    if r.rows_affected() != 1 {
+        return Err(AppError::NotFound("Retryable import not found".into()));
+    }
+
+    tx.commit().await?;
+
+    let service = TasksService::new(pool, None);
+    let status = service.get_task_status(user.id, id).await?;
+    service.start_task(id);
+
+    Ok(Json(status))
 }

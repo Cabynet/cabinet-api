@@ -38,9 +38,9 @@ impl NetscapeParser {
         let mut folder_stack: Vec<usize> = Vec::new();
         let mut pending_folder_idx: Option<usize> = None;
 
-        let mut chars = html.char_indices().peekable();
+        let chars = html.char_indices();
 
-        while let Some((i, c)) = chars.next() {
+        for (i, c) in chars {
             if c != '<' {
                 continue;
             }
@@ -133,13 +133,11 @@ impl NetscapeParser {
         let attr_pattern = format!("{}=", attr_name.to_lowercase());
 
         if let Some(pos) = tag_lower.find(&attr_pattern) {
-            let after_equal = &tag[pos + attr_pattern.len()..].trim_start();
-            if after_equal.starts_with('"') {
-                let rest = &after_equal[1..];
+            let after_equal = tag[pos + attr_pattern.len()..].trim_start();
+            if let Some(rest) = after_equal.strip_prefix('"') {
                 let end = rest.find('"')?;
                 Some(decode_entities(&rest[..end]))
-            } else if after_equal.starts_with('\'') {
-                let rest = &after_equal[1..];
+            } else if let Some(rest) = after_equal.strip_prefix('\'') {
                 let end = rest.find('\'')?;
                 Some(decode_entities(&rest[..end]))
             } else {

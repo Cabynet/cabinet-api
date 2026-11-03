@@ -8,7 +8,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone)]
 pub struct R2Service {
-    account_id: String,
+    endpoint: String,
     access_key_id: String,
     secret_access_key: String,
     bucket_name: String,
@@ -18,7 +18,7 @@ pub struct R2Service {
 impl R2Service {
     pub fn new(config: &AppConfig) -> Self {
         Self {
-            account_id: config.r2_account_id.clone(),
+            endpoint: config.r2_endpoint.trim_end_matches('/').to_owned(),
             access_key_id: config.r2_access_key_id.clone(),
             secret_access_key: config.r2_secret_access_key.clone(),
             bucket_name: config.r2_bucket_name.clone(),
@@ -30,10 +30,7 @@ impl R2Service {
         if !self.public_url.is_empty() {
             format!("{}/{}", self.public_url.trim_end_matches('/'), object_key)
         } else {
-            format!(
-                "https://{}.r2.cloudflarestorage.com/{}/{}",
-                self.account_id, self.bucket_name, object_key
-            )
+            format!("{}/{}/{}", self.endpoint, self.bucket_name, object_key)
         }
     }
 
@@ -50,9 +47,12 @@ impl R2Service {
         _content_type: &str,
         expires_seconds: u64,
     ) -> Result<String, AppError> {
-        if self.access_key_id.is_empty() || self.secret_access_key.is_empty() {
-            // Local dev fallback
-            return Ok(format!("http://localhost:4000/v1/mock-upload/{}", object_key));
+        self.presign(object_key, "PUT", expires_seconds)
+    }
+
+    fn presign(&self, object_key: &str, method: &str, expires_seconds: u64) -> Result<String, AppError> {
+        if self.access_key_id.is_empty() || self.secret_access_key.is_empty() || self.public_url.is_empty() {
+            return Err(AppError::BadRequest("R2 storage is not configured; set R2_ACCOUNT_ID, credentials and R2_PUBLIC_URL".into()));
         }
 
         let now = Utc::now();
@@ -61,14 +61,18 @@ impl R2Service {
         let region = "auto";
         let service = "s3";
 
-        let host = format!("{}.r2.cloudflarestorage.com", self.account_id);
+        let endpoint = url::Url::parse(&self.endpoint).map_err(|_|AppError::BadRequest("Invalid R2_ENDPOINT".into()))?;
+        if !matches!(endpoint.scheme(), "http" | "https") || endpoint.path() != "/" || endpoint.query().is_some() || endpoint.host_str().is_none() {
+            return Err(AppError::BadRequest("R2_ENDPOINT must be an HTTP(S) origin".into()));
+        }
+        let host = endpoint[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
         let canonical_uri = format!("/{}/{}", self.bucket_name, object_key);
 
         let credential_scope = format!("{}/{}/{}/aws4_request", date_stamp, region, service);
         let x_amz_credential = format!("{}/{}", self.access_key_id, credential_scope);
 
         // Query params in alphabetical order
-        let mut query_params = vec![
+        let mut query_params = [
             ("X-Amz-Algorithm", "AWS4-HMAC-SHA256".to_string()),
             ("X-Amz-Credential", x_amz_credential),
             ("X-Amz-Date", amz_date.clone()),
@@ -88,8 +92,8 @@ impl R2Service {
         let payload_hash = "UNSIGNED-PAYLOAD";
 
         let canonical_request = format!(
-            "PUT\n{}\n{}\n{}\n{}\n{}",
-            canonical_uri, canonical_query_string, canonical_headers, signed_headers, payload_hash
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            method, canonical_uri, canonical_query_string, canonical_headers, signed_headers, payload_hash
         );
 
         let mut hasher = Sha256::new();
@@ -109,11 +113,32 @@ impl R2Service {
         let signature = hex::encode(Self::hmac_sha256(&k_signing, string_to_sign.as_bytes()));
 
         let final_url = format!(
-            "https://{}{}?{}&X-Amz-Signature={}",
-            host, canonical_uri, canonical_query_string, signature
+            "{}{}?{}&X-Amz-Signature={}",
+            self.endpoint, canonical_uri, canonical_query_string, signature
         );
 
         Ok(final_url)
+    }
+
+    pub async fn verify_object(&self, object_key: &str, expected_size: i64) -> Result<(), AppError> {
+        let url = self.presign(object_key, "HEAD", 60)?;
+        let response = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build().map_err(|e| AppError::Internal(e.into()))?
+            .head(url).send().await.map_err(|e| AppError::BadRequest(format!("Storage verification failed: {}", e)))?;
+        if !response.status().is_success() || response.headers().get(reqwest::header::CONTENT_LENGTH).and_then(|v|v.to_str().ok()).and_then(|v|v.parse::<i64>().ok()) != Some(expected_size) {
+            return Err(AppError::BadRequest("Uploaded object is missing or its size does not match".into()));
+        }
+        Ok(())
+    }
+
+    /// Removes an object; a missing object counts as deleted.
+    pub async fn delete_object(&self, object_key: &str) -> Result<(), AppError> {
+        let url = self.presign(object_key, "DELETE", 60)?;
+        let response = reqwest::Client::builder().timeout(std::time::Duration::from_secs(8)).build().map_err(|e| AppError::Internal(e.into()))?
+            .delete(url).send().await.map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to delete from R2: {}", e)))?;
+        if !response.status().is_success() && response.status() != reqwest::StatusCode::NOT_FOUND {
+            return Err(AppError::Internal(anyhow::anyhow!("R2 delete returned {}", response.status())));
+        }
+        Ok(())
     }
 
     /// Upload bytes directly from worker (e.g. WebP thumbnail)
@@ -132,7 +157,8 @@ impl R2Service {
             .body(bytes)
             .send()
             .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to upload to R2: {}", e)))?;
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to upload to R2: {}", e)))?
+            .error_for_status().map_err(|e| AppError::BadRequest(format!("Storage rejected upload: {}", e)))?;
 
         Ok(self.get_public_url(object_key))
     }

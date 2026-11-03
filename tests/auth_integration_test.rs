@@ -2,11 +2,11 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::db::create_db_pool,
     modules::auth::{
-        dto::{AuthUser, RegisterRequest, SessionResponse},
+        dto::{MeResponse, RegisterRequest, SessionResponse},
         handlers::router as auth_router,
     },
 };
@@ -14,16 +14,8 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn test_dual_auth_cookie_and_bearer() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
-
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => {
-            eprintln!("Skipping integration test: PostgreSQL cabinet database not reachable");
-            return;
-        }
-    };
+    let config = common::config();
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
 
     let app = axum::Router::new()
         .nest("/v1/auth", auth_router())
@@ -75,8 +67,9 @@ async fn test_dual_auth_cookie_and_bearer() {
     let bearer_bytes = axum::body::to_bytes(resp_bearer.into_body(), 1024 * 64)
         .await
         .unwrap();
-    let me_bearer: AuthUser = serde_json::from_slice(&bearer_bytes).unwrap();
+    let me_bearer: MeResponse = serde_json::from_slice(&bearer_bytes).unwrap();
     assert_eq!(me_bearer.email, email);
+    assert_eq!(me_bearer.session.user_id, session_res.user.id);
 
     // 3. Test /me via Cookie (Web App style)
     let req_cookie = Request::builder()
@@ -91,8 +84,9 @@ async fn test_dual_auth_cookie_and_bearer() {
     let cookie_bytes = axum::body::to_bytes(resp_cookie.into_body(), 1024 * 64)
         .await
         .unwrap();
-    let me_cookie: AuthUser = serde_json::from_slice(&cookie_bytes).unwrap();
+    let me_cookie: MeResponse = serde_json::from_slice(&cookie_bytes).unwrap();
     assert_eq!(me_cookie.email, email);
+    assert_eq!(me_cookie.session.user_id, session_res.user.id);
 
     // 4. Test /me without token (should be 401 Unauthorized)
     let req_unauth = Request::builder()

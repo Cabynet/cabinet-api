@@ -2,8 +2,8 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
+mod common;
 use cabinet_api::{
-    config::AppConfig,
     infra::db::create_db_pool,
     modules::{
         auth::{
@@ -25,13 +25,8 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_notes_optimistic_concurrency_and_conflict_409() {
-    let mut config = AppConfig::from_env().expect("config");
-    config.database_url = "postgresql://postgres:postgrespassword@localhost:5432/cabinet".to_string();
-
-    let pool = match create_db_pool(&config).await {
-        Ok(p) => p,
-        Err(_) => return,
-    };
+    let config = common::config();
+    let pool = create_db_pool(&config).await.expect("Isolated test database is required");
 
     let app = axum::Router::new()
         .nest("/v1/auth", auth_router())
@@ -75,6 +70,7 @@ async fn test_notes_optimistic_concurrency_and_conflict_409() {
                 item_type: Some("NOTE".to_string()),
                 client_request_id: Some(Uuid::now_v7()),
                 tags: None,
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -113,6 +109,7 @@ async fn test_notes_optimistic_concurrency_and_conflict_409() {
                 save_id: Some(save_id_1),
                 document: Some(serde_json::json!({ "type": "paragraph", "text": "Draft content" })),
                 plain_text: Some("Draft content discussing modular monolith architecture".to_string()),
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -149,6 +146,7 @@ async fn test_notes_optimistic_concurrency_and_conflict_409() {
                 save_id: Some(save_id_1),
                 document: Some(serde_json::json!({ "type": "paragraph", "text": "Draft content" })),
                 plain_text: Some("Draft content discussing modular monolith architecture".to_string()),
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -173,6 +171,7 @@ async fn test_notes_optimistic_concurrency_and_conflict_409() {
                 save_id: Some(save_id_2),
                 document: Some(serde_json::json!({ "type": "paragraph", "text": "Conflicting edit" })),
                 plain_text: Some("Conflicting edit from other tab".to_string()),
+                ..Default::default()
             })
             .unwrap(),
         ))
@@ -193,6 +192,7 @@ async fn test_notes_optimistic_concurrency_and_conflict_409() {
                 save_id: Some(save_id_2),
                 document: Some(serde_json::json!({ "type": "paragraph", "text": "Resolved edit" })),
                 plain_text: Some("Resolved edit merged with current".to_string()),
+                ..Default::default()
             })
             .unwrap(),
         ))

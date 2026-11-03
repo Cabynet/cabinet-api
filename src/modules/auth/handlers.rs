@@ -5,31 +5,38 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use sha2::Digest;
 use sqlx::PgPool;
 use validator::Validate;
 
 use crate::config::AppConfig;
 use crate::errors::AppError;
-use crate::infra::redis::create_redis_pool;
-use super::dto::{AuthUser, LoginRequest, RegisterRequest};
-use super::middleware::{CurrentUser, SessionToken};
+use super::dto::{LoginRequest, MeResponse, RegisterRequest};
+use super::middleware::{CurrentSession, CurrentUser, SessionToken};
 use super::oauth::{OAuthAuthorizeQuery, OAuthCallbackQuery, OAuthService};
 use super::service::AuthService;
 
 pub fn router() -> Router<PgPool> {
+    router_routes().layer(axum::middleware::from_fn(crate::infra::camel::camelize_json))
+}
+
+fn router_routes() -> Router<PgPool> {
     Router::new()
         .route("/register", post(register_handler))
         .route("/login", post(login_handler))
         .route("/me", get(me_handler))
         .route("/logout", post(logout_handler))
         .route("/sign-in/social", post(sign_in_social_handler))
+        .route("/accounts", get(list_accounts))
         .route("/oauth/:provider", get(oauth_authorize_handler))
         .route("/callback/:provider", get(oauth_callback_handler))
 }
 
 #[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SignInSocialRequest {
     pub provider: String,
+    #[serde(alias = "callback_url")]
     pub callback_url: Option<String>,
     #[serde(rename = "callbackURL")]
     pub callback_url_camel: Option<String>,
@@ -47,10 +54,9 @@ pub struct SignInSocialRequest {
 pub async fn sign_in_social_handler(
     State(pool): State<PgPool>,
     Json(payload): Json<SignInSocialRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let config = AppConfig::from_env().map_err(AppError::Internal)?;
-    let redis = create_redis_pool(&config).await.ok();
-    let mut oauth_service = OAuthService::new(pool, redis, config);
+) -> Result<impl IntoResponse, AppError> {
+    let config = AppConfig::shared().map_err(AppError::Internal)?.clone();
+    let mut oauth_service = OAuthService::new(pool, crate::infra::redis::shared().await, config);
 
     let redirect_uri = payload.callback_url_camel.or(payload.callback_url);
 
@@ -62,17 +68,39 @@ pub async fn sign_in_social_handler(
 
     let res = oauth_service.get_authorization_url(&payload.provider, query).await?;
 
-    Ok(Json(serde_json::json!({
+    let mut headers = HeaderMap::new();
+    headers.insert(header::SET_COOKIE, oauth_nonce_cookie(&res.nonce));
+    Ok((headers, Json(serde_json::json!({
         "url": res.authorization_url,
         "redirect": false
-    })))
+    }))))
 }
 
-fn build_session_cookie(token: &str, max_age: i64) -> HeaderValue {
-    let cookie_val = format!(
+const OAUTH_NONCE_COOKIE: &str = "cabinet_oauth_nonce";
+
+/// Short-lived cookie tying an OAuth callback to the browser that started it; an empty nonce clears it.
+fn oauth_nonce_cookie(nonce: &str) -> HeaderValue {
+    let max_age = if nonce.is_empty() { 0 } else { super::OAUTH_STATE_TTL_SECS };
+    let mut cookie = format!("{OAUTH_NONCE_COOKIE}={nonce}; HttpOnly; Path=/v1/auth; SameSite=Lax; Max-Age={max_age}");
+    if std::env::var("API_URL").is_ok_and(|u| u.starts_with("https://")) {
+        cookie.push_str("; Secure");
+    }
+    HeaderValue::from_str(&cookie).expect("Valid cookie header")
+}
+
+pub(crate) fn build_session_cookie(token: &str, max_age: i64) -> HeaderValue {
+    let mut cookie_val = format!(
         "cabinet_session={}; HttpOnly; Path=/; SameSite=Lax; Max-Age={}",
         token, max_age
     );
+    if let Ok(config) = AppConfig::shared() {
+        if config.api_url.starts_with("https://") {
+            cookie_val.push_str("; Secure");
+        }
+        if let Some(domain) = &config.cookie_domain {
+            cookie_val.push_str(&format!("; Domain={}", domain.trim()));
+        }
+    }
     HeaderValue::from_str(&cookie_val).expect("Valid cookie header")
 }
 
@@ -139,6 +167,17 @@ pub async fn login_handler(
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
 
+    // Per-email bucket on top of the per-IP one, so a botnet can't brute-force a single account.
+    if let Some(mut redis) = crate::infra::redis::shared().await {
+        let digest = hex::encode(&sha2::Sha256::digest(payload.email.trim().to_lowercase().as_bytes())[..8]);
+        let key = format!("cabinet:ratelimit:login-email:{digest}");
+        if let Ok(status) = crate::infra::rate_limit::RedisRateLimiter::check_limit(&mut redis, &key, 10, 900).await {
+            if !status.allowed {
+                return Err(AppError::TooManyRequests("Too many login attempts for this account. Try again later.".into()));
+            }
+        }
+    }
+
     let auth_service = AuthService::new(pool);
     let session = auth_service
         .login(payload, "WEB", user_agent, None)
@@ -157,7 +196,7 @@ pub async fn login_handler(
     get,
     path = "/v1/auth/me",
     responses(
-        (status = 200, description = "Current authenticated user", body = AuthUser),
+        (status = 200, description = "Current authenticated user and active session metadata", body = MeResponse),
         (status = 401, description = "Unauthorized", body = ErrorResponse)
     ),
     security(
@@ -166,8 +205,17 @@ pub async fn login_handler(
     ),
     tag = "auth"
 )]
-pub async fn me_handler(CurrentUser(user): CurrentUser) -> Result<Json<AuthUser>, AppError> {
-    Ok(Json(user))
+pub async fn me_handler(
+    CurrentUser(user): CurrentUser,
+    CurrentSession(session): CurrentSession,
+) -> Result<Json<MeResponse>, AppError> {
+    Ok(Json(MeResponse {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatar_url: user.avatar_url,
+        session,
+    }))
 }
 
 #[utoipa::path(
@@ -213,17 +261,17 @@ pub async fn oauth_authorize_handler(
     Path(provider): Path<String>,
     Query(query): Query<OAuthAuthorizeQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let config = AppConfig::from_env().map_err(AppError::Internal)?;
-    let redis = create_redis_pool(&config).await.ok();
-    let mut oauth_service = OAuthService::new(pool, redis, config);
+    let config = AppConfig::shared().map_err(AppError::Internal)?.clone();
+    let mut oauth_service = OAuthService::new(pool, crate::infra::redis::shared().await, config);
 
     let want_json = query.format.as_deref() == Some("json");
     let res = oauth_service.get_authorization_url(&provider, query).await?;
 
+    let mut headers = HeaderMap::new();
+    headers.insert(header::SET_COOKIE, oauth_nonce_cookie(&res.nonce));
     if want_json {
-        Ok((StatusCode::OK, HeaderMap::new(), Json(serde_json::to_value(res).unwrap())).into_response())
+        Ok((StatusCode::OK, headers, Json(serde_json::to_value(res).unwrap())).into_response())
     } else {
-        let mut headers = HeaderMap::new();
         headers.insert(
             header::LOCATION,
             HeaderValue::from_str(&res.authorization_url)
@@ -237,18 +285,22 @@ pub async fn oauth_callback_handler(
     State(pool): State<PgPool>,
     Path(provider): Path<String>,
     Query(query): Query<OAuthCallbackQuery>,
+    request_headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
-    let config = AppConfig::from_env().map_err(AppError::Internal)?;
-    let redis = create_redis_pool(&config).await.ok();
-    let mut oauth_service = OAuthService::new(pool, redis, config);
+    let config = AppConfig::shared().map_err(AppError::Internal)?.clone();
+    let mut oauth_service = OAuthService::new(pool, crate::infra::redis::shared().await, config);
 
-    let (session, destination_url) = oauth_service.handle_callback(&provider, query).await?;
+    let nonce = request_headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .find_map(|c| c.trim().strip_prefix(concat!("cabinet_oauth_nonce", "=")));
+    let (session, destination_url) = oauth_service.handle_callback(&provider, query, nonce).await?;
 
     let mut headers = HeaderMap::new();
-    headers.insert(
-        header::SET_COOKIE,
-        build_session_cookie(&session.token, 2592000),
-    );
+    headers.append(header::SET_COOKIE, build_session_cookie(&session.token, 2592000));
+    headers.append(header::SET_COOKIE, oauth_nonce_cookie(""));
     headers.insert(
         header::LOCATION,
         HeaderValue::from_str(&destination_url)
@@ -256,4 +308,28 @@ pub async fn oauth_callback_handler(
     );
 
     Ok((StatusCode::FOUND, headers, ()))
+}
+
+async fn list_accounts(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let rows: Vec<serde_json::Value> = sqlx::query_scalar(
+        r#"
+        SELECT jsonb_build_object(
+            'id', provider,
+            'accountId', provider,
+            'providerId', provider,
+            'createdAt', created_at
+        )
+        FROM oauth_accounts
+        WHERE user_id = $1
+        ORDER BY created_at
+        "#,
+    )
+    .bind(user.id)
+    .fetch_all(&pool)
+    .await?;
+
+    Ok(Json(rows))
 }

@@ -30,12 +30,13 @@ impl TagsService {
     pub async fn list_tags(&self, user_id: Uuid) -> Result<Vec<TagDto>, AppError> {
         let rows = sqlx::query_as::<_, (Uuid, String, String, i64, DateTime<Utc>)>(
             r#"
-            SELECT t.id, t.name, t.slug, COUNT(bt.bookmark_id)::bigint as bookmark_count, t.created_at
+            SELECT t.id, t.name, t.slug, COUNT(b.id)::bigint as bookmark_count, t.created_at
             FROM tags t
-            LEFT JOIN bookmark_tags bt ON bt.tag_id = t.id
+            LEFT JOIN (bookmark_tags bt JOIN bookmarks b ON b.id = bt.bookmark_id AND b.deleted_at IS NULL AND b.user_id = $1)
+                ON bt.tag_id = t.id
             WHERE t.user_id = $1
             GROUP BY t.id, t.name, t.slug, t.created_at
-            ORDER BY t.name ASC
+            ORDER BY bookmark_count DESC, t.name ASC
             "#,
         )
         .bind(user_id)
