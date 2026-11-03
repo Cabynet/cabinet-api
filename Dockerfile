@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for Cabinet API (Rust + Axum)
 # Output binary is stripped and runs on minimal Debian Bookworm Slim with a non-root user.
 
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.91-bookworm AS builder
 
 WORKDIR /app
 
@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/li
 COPY Cargo.toml Cargo.lock ./
 
 # Create dummy src to build dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+# Cargo.toml declares both a lib and a bin target, so the dummy build needs both files.
+RUN mkdir src && echo "fn main() {}" > src/main.rs && touch src/lib.rs
 RUN cargo build --release && rm -rf src
 
 # 3. Copy real source code and migrations
@@ -20,7 +21,7 @@ COPY src src
 COPY migrations migrations
 
 # Touch main.rs to invalidate dummy build and produce real release binary
-RUN touch src/main.rs && cargo build --release
+RUN touch src/main.rs src/lib.rs && cargo build --release
 
 # 4. Final minimal runtime stage (~45MB)
 FROM debian:bookworm-slim AS runner
