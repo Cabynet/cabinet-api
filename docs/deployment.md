@@ -1,6 +1,6 @@
 # Deployment
 
-`.github/workflows/deploy.yml` runs on every push to `main`: tests (`scripts/test.sh`), builds the image, pushes it to `ghcr.io/cabynet/cabinet-api`, copies `docker/compose.production.yml` and `docker/Caddyfile` to the VPS and restarts the `api` service. Pull requests only run the tests.
+`.github/workflows/deploy.yml` runs on every push to `main`: tests (`scripts/test.sh`), builds the image, pushes it to `ghcr.io/cabynet/cabinet-api`, copies `docker/compose.production.yml` to the VPS and restarts the `api` service. The server's `docker/Caddyfile` is left alone because it can serve other sites too; copy `docker/Caddyfile` by hand on a first setup. Pull requests only run the tests.
 
 ## GitHub settings (Settings > Secrets and variables > Actions)
 

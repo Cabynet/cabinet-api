@@ -109,7 +109,9 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "docker/compose.production.yml,docker/Caddyfile"
+          # The server's Caddyfile is not synced: it also serves other sites on this host.
+          # docker/Caddyfile is the template for a first setup (see docs/deployment.md).
+          source: "docker/compose.production.yml"
           target: ${{ vars.DEPLOY_PATH }}
 
       - name: Deploy
