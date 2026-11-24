@@ -687,59 +687,6 @@
         }
       }
     },
-    "/v1/bookmarks/media/download": {
-      "post": {
-        "tags": [
-          "bookmarks"
-        ],
-        "operationId": "download_media",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DownloadMediaRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "The MP4 or MP3 file"
-          }
-        }
-      }
-    },
-    "/v1/bookmarks/media/extract": {
-      "get": {
-        "tags": [
-          "bookmarks"
-        ],
-        "operationId": "extract_media",
-        "parameters": [
-          {
-            "name": "url",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Title and formats of a post's video",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MediaInfo"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/bookmarks/previews": {
       "get": {
         "tags": [
@@ -2960,26 +2907,6 @@
           }
         }
       },
-      "DownloadMediaRequest": {
-        "type": "object",
-        "required": [
-          "url",
-          "mediaType"
-        ],
-        "properties": {
-          "formatId": {
-            "type": "string",
-            "nullable": true
-          },
-          "mediaType": {
-            "type": "string",
-            "description": "VIDEO (MP4) or AUDIO (MP3)."
-          },
-          "url": {
-            "type": "string"
-          }
-        }
-      },
       "DrawingRequest": {
         "type": "object",
         "required": [
@@ -3323,79 +3250,6 @@
           },
           "session": {
             "$ref": "#/components/schemas/SessionMetadata"
-          }
-        }
-      },
-      "MediaFormat": {
-        "type": "object",
-        "required": [
-          "formatId",
-          "ext",
-          "resolution",
-          "note",
-          "hasVideo",
-          "hasAudio"
-        ],
-        "properties": {
-          "ext": {
-            "type": "string"
-          },
-          "filesize": {
-            "type": "integer",
-            "format": "int64",
-            "nullable": true,
-            "minimum": 0
-          },
-          "formatId": {
-            "type": "string"
-          },
-          "hasAudio": {
-            "type": "boolean"
-          },
-          "hasVideo": {
-            "type": "boolean"
-          },
-          "note": {
-            "type": "string"
-          },
-          "resolution": {
-            "type": "string"
-          }
-        }
-      },
-      "MediaInfo": {
-        "type": "object",
-        "required": [
-          "title",
-          "platform",
-          "formats"
-        ],
-        "properties": {
-          "author": {
-            "type": "string",
-            "nullable": true
-          },
-          "duration": {
-            "type": "integer",
-            "format": "int64",
-            "nullable": true,
-            "minimum": 0
-          },
-          "formats": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MediaFormat"
-            }
-          },
-          "platform": {
-            "type": "string"
-          },
-          "thumbnail": {
-            "type": "string",
-            "nullable": true
-          },
-          "title": {
-            "type": "string"
           }
         }
       },
