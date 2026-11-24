@@ -33,6 +33,8 @@ fn router_routes() -> Router<PgPool> {
         .route("/duplicates", get(get_duplicates_handler))
         .route("/duplicates/cleanup", axum::routing::post(cleanup_duplicates_handler))
         .route("/export", get(crate::modules::tasks::handlers::export_bookmarks_handler))
+        .route("/media/extract", get(super::media_download::extract_media))
+        .route("/media/download", axum::routing::post(super::media_download::download_media))
         .merge(super::actions::router())
         .route(
             "/:id",
