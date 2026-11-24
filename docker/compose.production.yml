@@ -8,6 +8,7 @@ x-logging: &logging
 
 services:
   postgres:
+    # Stays on 17: a new major cannot open the existing data volume; upgrade only via dump/restore.
     image: postgres:17-alpine
     restart: unless-stopped
     mem_limit: 512m
@@ -26,7 +27,7 @@ services:
     logging: *logging
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     mem_limit: 128m
     command: [redis-server, --appendonly, "yes", --maxmemory, 96mb, --maxmemory-policy, noeviction]

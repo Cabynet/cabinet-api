@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for Cabinet API (Rust + Axum)
-# Output binary is stripped and runs on minimal Debian Bookworm Slim with a non-root user.
+# Output binary is stripped and runs on minimal Debian Trixie Slim with a non-root user.
 
-FROM rust:1.91-bookworm AS builder
+FROM rust:1.99-trixie AS builder
 
 WORKDIR /app
 
@@ -24,7 +24,7 @@ COPY migrations migrations
 RUN touch src/main.rs src/lib.rs && cargo build --release
 
 # 4. Final minimal runtime stage (~45MB)
-FROM debian:bookworm-slim AS runner
+FROM debian:trixie-slim AS runner
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata curl && rm -rf /var/lib/apt/lists/*
 
