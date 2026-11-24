@@ -25,7 +25,12 @@ impl FoldersService {
                     'parent_id', CASE WHEN f.user_id = $1 THEN f.parent_id ELSE NULL END,
                     'access', CASE WHEN f.user_id = $1 THEN 'OWNER' ELSE m.role END,
                     'share_enabled', f.share_token_hash IS NOT NULL
-                        AND (f.share_expires_at IS NULL OR f.share_expires_at > now())
+                        AND (f.share_expires_at IS NULL OR f.share_expires_at > now()),
+                    'pending_requests', CASE WHEN f.user_id = $1 THEN (
+                        SELECT count(*) FROM folder_access_requests r
+                        WHERE r.folder_id = f.id
+                          AND NOT EXISTS (SELECT 1 FROM folder_members fm WHERE fm.folder_id = f.id AND fm.user_id = r.user_id)
+                    ) ELSE 0 END
                 )
             FROM folders f
             LEFT JOIN folder_members m ON m.folder_id = f.id AND m.user_id = $1
@@ -111,6 +116,8 @@ impl FoldersService {
             position: row.4,
             access: "OWNER".into(),
             share_enabled: false,
+            // Create/update responses skip the count; the folder list carries it.
+            pending_requests: 0,
             created_at: row.5,
             updated_at: row.6,
         })
@@ -196,6 +203,8 @@ impl FoldersService {
             position: row.4,
             access: "OWNER".into(),
             share_enabled: row.5.is_some(),
+            // Create/update responses skip the count; the folder list carries it.
+            pending_requests: 0,
             created_at: row.6,
             updated_at: row.7,
         })
@@ -340,6 +349,7 @@ impl FoldersService {
                 position: row.5,
                 access: "VIEWER".into(),
                 share_enabled: true,
+                pending_requests: 0,
                 created_at: row.6,
                 updated_at: row.7,
             },

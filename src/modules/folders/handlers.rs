@@ -56,6 +56,7 @@ fn router_routes() -> Router<PgPool> {
     Router::new()
         .route("/", get(list_folders).post(create_folder))
         .merge(super::collaboration::router())
+        .merge(super::access::router())
         .route("/:id", put(update_folder).delete(delete_folder))
         .route("/:id/share", get(share_status).post(enable_share).put(enable_share).patch(update_share).delete(revoke_share))
 }

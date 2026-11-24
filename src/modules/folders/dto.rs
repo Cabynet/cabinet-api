@@ -14,6 +14,9 @@ pub struct FolderDto {
     pub access: String,
     pub position: i32,
     pub share_enabled: bool,
+    /// Pending "Request access" requests; only counted for the owner.
+    #[serde(default)]
+    pub pending_requests: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

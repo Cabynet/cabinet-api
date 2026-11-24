@@ -1304,6 +1304,207 @@
         }
       }
     },
+    "/v1/folders/{id}/access-requests": {
+      "get": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "list_requests",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending requests, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AccessRequestDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "request_access",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccessRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Request recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessRequestStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/folders/{id}/access-requests/mine": {
+      "get": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "my_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Whether the caller has a pending request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessRequestStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/folders/{id}/access-requests/{user}": {
+      "delete": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "deny_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "description": "Requesting user",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request declined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/folders/{id}/access-requests/{user}/approve": {
+      "post": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "approve_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user",
+            "in": "path",
+            "description": "Requesting user",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The person now has access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdatedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/folders/{id}/collaboration": {
       "get": {
         "tags": [
@@ -1497,6 +1698,39 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UpdatedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/folders/{id}/membership": {
+      "delete": {
+        "tags": [
+          "folders"
+        ],
+        "summary": "A member leaves a folder shared with them; the owner can't leave their own folder.",
+        "operationId": "leave_folder",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Left the shared folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedResponse"
                 }
               }
             }
@@ -2282,6 +2516,56 @@
           }
         }
       },
+      "AccessRequestBody": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "An optional note for the owner, up to 500 characters.",
+            "nullable": true
+          }
+        }
+      },
+      "AccessRequestDto": {
+        "type": "object",
+        "required": [
+          "userId",
+          "name",
+          "email",
+          "createdAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AccessRequestStatus": {
+        "type": "object",
+        "required": [
+          "requested"
+        ],
+        "properties": {
+          "requested": {
+            "type": "boolean"
+          }
+        }
+      },
       "ActivityMetadata": {
         "type": "object",
         "required": [
@@ -2419,6 +2703,17 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "ApproveRequestBody": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "type": "string"
           }
         }
       },
@@ -3067,6 +3362,11 @@
             "type": "string",
             "format": "uuid",
             "nullable": true
+          },
+          "pendingRequests": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending \"Request access\" requests; only counted for the owner."
           },
           "position": {
             "type": "integer",

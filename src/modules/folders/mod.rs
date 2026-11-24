@@ -1,3 +1,4 @@
+pub mod access;
 pub mod collaboration;
 pub mod dto;
 pub mod service;
