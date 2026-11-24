@@ -39,6 +39,7 @@ async fn test_oauth_authorization_url_pkce_and_csrf_state() {
             OAuthAuthorizeQuery {
                 client_type: Some("MOBILE".to_string()),
                 redirect_uri: Some("cabinet://auth/callback".to_string()),
+                error_redirect_uri: None,
                 format: Some("json".to_string()),
             },
         )
@@ -64,6 +65,7 @@ async fn test_oauth_authorization_url_pkce_and_csrf_state() {
             OAuthAuthorizeQuery {
                 client_type: Some("WEB".to_string()),
                 redirect_uri: None,
+                error_redirect_uri: None,
                 format: Some("json".to_string()),
             },
         )
@@ -80,8 +82,52 @@ async fn test_oauth_authorization_url_pkce_and_csrf_state() {
         .body(Body::empty())
         .unwrap();
 
+    // The browser is mid-redirect, so failures go back to the app (login page by default), not to a JSON error.
     let resp_fake = app.clone().oneshot(fake_callback_req).await.unwrap();
-    assert_eq!(resp_fake.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp_fake.status(), StatusCode::FOUND);
+    assert_eq!(resp_fake.headers()["location"], "http://localhost:3000/login?error=oauth_failed");
+
+    // A cancelled sign-in returns to the page that started it, without a session.
+    let started = oauth_service
+        .get_authorization_url(
+            "github",
+            OAuthAuthorizeQuery {
+                client_type: Some("WEB".to_string()),
+                redirect_uri: None,
+                error_redirect_uri: Some("http://localhost:3000/login?next=%2Fcabinet".to_string()),
+                format: Some("json".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+    let cancelled = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/auth/callback/github?error=access_denied&state={}", started.state))
+                .header("cookie", format!("cabinet_oauth_nonce={}", started.nonce))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancelled.status(), StatusCode::FOUND);
+    assert_eq!(cancelled.headers()["location"], "http://localhost:3000/login?next=%2Fcabinet&error=oauth_failed");
+    assert!(cancelled.headers().get_all("set-cookie").iter().all(|c| !c.to_str().unwrap().starts_with("cabinet_session=")));
+
+    // The error page must be in the app too; anything else would be an open redirect.
+    let off_site = oauth_service
+        .get_authorization_url(
+            "github",
+            OAuthAuthorizeQuery {
+                client_type: Some("WEB".to_string()),
+                redirect_uri: None,
+                error_redirect_uri: Some("https://evil.test/login".to_string()),
+                format: Some("json".to_string()),
+            },
+        )
+        .await;
+    assert!(off_site.is_err());
 
     // 4. Test Auto-link Existing User via OAuth
     let email = format!("autolink_{}@example.com", Uuid::now_v7());
@@ -177,7 +223,7 @@ async fn test_oauth_authorization_url_pkce_and_csrf_state() {
         let web = oauth_service
             .get_authorization_url(
                 "github",
-                OAuthAuthorizeQuery { client_type: Some("WEB".to_string()), redirect_uri: None, format: Some("json".to_string()) },
+                OAuthAuthorizeQuery { client_type: Some("WEB".to_string()), redirect_uri: None, error_redirect_uri: None, format: Some("json".to_string()) },
             )
             .await
             .unwrap();

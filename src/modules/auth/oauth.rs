@@ -25,6 +25,9 @@ pub struct OAuthStateData {
     pub code_verifier: String,
     pub client_type: String,
     pub redirect_uri: Option<String>,
+    /// Where a failed sign-in returns (validated like `redirect_uri`); None falls back to the login page.
+    #[serde(default)]
+    pub error_redirect_uri: Option<String>,
     /// Must match the `cabinet_oauth_nonce` cookie, so a callback can only finish in the browser that started it.
     #[serde(default)]
     pub browser_nonce: Option<String>,
@@ -37,7 +40,22 @@ pub struct OAuthAuthorizeQuery {
     pub client_type: Option<String>,
     #[serde(alias = "redirect_uri")]
     pub redirect_uri: Option<String>,
+    #[serde(alias = "error_redirect_uri")]
+    pub error_redirect_uri: Option<String>,
     pub format: Option<String>,
+}
+
+/// A failed callback and where to send the browser so the app can explain it.
+#[derive(Debug)]
+pub struct CallbackError {
+    pub error: AppError,
+    pub error_redirect: Option<String>,
+}
+
+impl std::fmt::Display for CallbackError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,6 +168,7 @@ impl OAuthService {
         }
 
         self.validate_redirect_uri(&client_type, &query.redirect_uri)?;
+        self.validate_redirect_uri(&client_type, &query.error_redirect_uri)?;
 
         // Native clients start the flow over API calls and finish in a different browser, so only WEB is bound.
         let nonce = Self::generate_state();
@@ -159,6 +178,7 @@ impl OAuthService {
             browser_nonce: (client_type == "WEB").then(|| nonce.clone()),
             client_type,
             redirect_uri: query.redirect_uri,
+            error_redirect_uri: query.error_redirect_uri,
         };
 
         // Cache state in Redis
@@ -221,30 +241,45 @@ impl OAuthService {
         provider: &str,
         query: OAuthCallbackQuery,
         browser_nonce: Option<&str>,
-    ) -> Result<(SessionResponse, String), AppError> {
-        if let Some(err) = query.error {
-            return Err(AppError::BadRequest(format!("OAuth provider error: {}", err)));
-        }
+    ) -> Result<(SessionResponse, String), CallbackError> {
+        // Read the state first, even when the provider reports an error (e.g. the user cancelled),
+        // so the failure can return to the page that started the sign-in.
+        let state_data = self
+            .take_state(query.state.as_deref())
+            .await
+            .map_err(|error| CallbackError { error, error_redirect: None })?;
+        let error_redirect = state_data.error_redirect_uri.clone();
+        self.finish_callback(provider, query, browser_nonce, state_data)
+            .await
+            .map_err(|error| CallbackError { error, error_redirect })
+    }
 
-        let code = query
-            .code
-            .ok_or_else(|| AppError::BadRequest("Missing authorization code".to_string()))?;
-        let state = query
-            .state
-            .ok_or_else(|| AppError::BadRequest("Missing state parameter".to_string()))?;
-
-        // 1. Retrieve state data from Redis
-        let state_data: OAuthStateData = if let Some(ref mut redis) = self.redis {
+    async fn take_state(&mut self, state: Option<&str>) -> Result<OAuthStateData, AppError> {
+        let state = state.ok_or_else(|| AppError::BadRequest("Missing state parameter".to_string()))?;
+        if let Some(ref mut redis) = self.redis {
             let key = format!("{}{}", OAUTH_STATE_KEY_PREFIX, state);
             let raw: Option<String> = redis.get(&key).await.ok();
             let _: Result<(), redis::RedisError> = redis.del(&key).await;
             raw.and_then(|s| serde_json::from_str(&s).ok())
-                .ok_or_else(|| AppError::BadRequest("Invalid or expired OAuth state".to_string()))?
+                .ok_or_else(|| AppError::BadRequest("Invalid or expired OAuth state".to_string()))
         } else {
-            return Err(AppError::Internal(anyhow::anyhow!(
-                "Redis required for OAuth state tracking"
-            )));
-        };
+            Err(AppError::Internal(anyhow::anyhow!("Redis required for OAuth state tracking")))
+        }
+    }
+
+    async fn finish_callback(
+        &mut self,
+        provider: &str,
+        query: OAuthCallbackQuery,
+        browser_nonce: Option<&str>,
+        state_data: OAuthStateData,
+    ) -> Result<(SessionResponse, String), AppError> {
+        if let Some(err) = query.error {
+            return Err(AppError::BadRequest(format!("OAuth provider error: {}", err)));
+        }
+        let code = query
+            .code
+            .ok_or_else(|| AppError::BadRequest("Missing authorization code".to_string()))?;
 
         let provider_lower = provider.to_lowercase();
         if state_data.provider != provider_lower {

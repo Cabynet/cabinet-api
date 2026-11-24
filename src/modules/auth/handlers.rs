@@ -40,6 +40,9 @@ pub struct SignInSocialRequest {
     pub callback_url: Option<String>,
     #[serde(rename = "callbackURL")]
     pub callback_url_camel: Option<String>,
+    /// Where a failed sign-in returns; same-origin rules as callbackURL.
+    #[serde(rename = "errorCallbackURL")]
+    pub error_callback_url: Option<String>,
 }
 
 #[utoipa::path(
@@ -63,6 +66,7 @@ pub async fn sign_in_social_handler(
     let query = OAuthAuthorizeQuery {
         client_type: Some("WEB".to_string()),
         redirect_uri,
+        error_redirect_uri: payload.error_callback_url,
         format: Some("json".to_string()),
     };
 
@@ -296,11 +300,19 @@ pub async fn oauth_callback_handler(
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(';'))
         .find_map(|c| c.trim().strip_prefix(concat!("cabinet_oauth_nonce", "=")));
-    let (session, destination_url) = oauth_service.handle_callback(&provider, query, nonce).await?;
-
     let mut headers = HeaderMap::new();
-    headers.append(header::SET_COOKIE, build_session_cookie(&session.token, 2592000));
     headers.append(header::SET_COOKIE, oauth_nonce_cookie(""));
+    let destination_url = match oauth_service.handle_callback(&provider, query, nonce).await {
+        Ok((session, destination_url)) => {
+            headers.append(header::SET_COOKIE, build_session_cookie(&session.token, 2592000));
+            destination_url
+        }
+        // The browser is mid-redirect from the provider, so send it back to the app instead of a JSON error.
+        Err(failure) => {
+            tracing::warn!(provider = %provider, error = %failure, "OAuth callback failed");
+            failed_sign_in_url(&oauth_service.config.frontend_url, failure.error_redirect)
+        }
+    };
     headers.insert(
         header::LOCATION,
         HeaderValue::from_str(&destination_url)
@@ -308,6 +320,17 @@ pub async fn oauth_callback_handler(
     );
 
     Ok((StatusCode::FOUND, headers, ()))
+}
+
+/// The page that started the sign-in (or the login page) with `error=oauth_failed`, which it explains.
+fn failed_sign_in_url(frontend_url: &str, error_redirect: Option<String>) -> String {
+    let fallback = format!("{}/login", frontend_url.trim_end_matches('/'));
+    let mut url = error_redirect
+        .and_then(|u| url::Url::parse(&u).ok())
+        .or_else(|| url::Url::parse(&fallback).ok())
+        .expect("FRONTEND_URL is a valid URL");
+    url.query_pairs_mut().append_pair("error", "oauth_failed");
+    url.into()
 }
 
 async fn list_accounts(
