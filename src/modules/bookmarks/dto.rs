@@ -110,6 +110,8 @@ pub struct ListBookmarksQuery {
     #[serde(alias = "is_favorite")]
     pub is_favorite: Option<bool>,
     pub trash: Option<bool>,
+    /// Only items that are not in any folder.
+    pub unsorted: Option<bool>,
     pub status: Option<String>,
     pub search: Option<String>,
     #[serde(rename = "type")]

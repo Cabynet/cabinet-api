@@ -403,6 +403,8 @@ impl BookmarksService {
         }
         if let Some(folder) = q.folder_id {
             qb.push(" AND b.folder_id = ").push_bind(folder);
+        } else if q.unsorted.unwrap_or(false) {
+            qb.push(" AND b.folder_id IS NULL");
         }
         if let Some(favorite) = q.is_favorite {
             qb.push(" AND b.is_favorite = ").push_bind(favorite);
