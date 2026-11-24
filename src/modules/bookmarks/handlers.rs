@@ -269,7 +269,7 @@ pub async fn sign_proxy_urls_handler(
         Some(_) => return Err(AppError::BadRequest("kind must be image or page".into())),
     };
     let allowed: Vec<String> = if let Some(token) = req.share_token {
-        let (folder, owner_id) = crate::modules::folders::service::FoldersService::new(pool.clone())
+        let (folder, owner_id, _) = crate::modules::folders::service::FoldersService::new(pool.clone())
             .get_shared_folder(&token)
             .await?;
         sqlx::query_scalar(

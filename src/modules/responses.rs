@@ -50,6 +50,10 @@ pub struct StatusResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ShareTokenResponse {
     pub share_token: Option<String>,
+    /// When the public link stops working; null never expires.
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// What the link grants: VIEWER (no sign-in) or CONTRIBUTOR/EDITOR (join after sign-in).
+    pub role: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -121,19 +125,14 @@ pub struct FolderMemberDto {
 pub struct CollaborationResponse {
     pub owner: FolderUserDto,
     pub members: Vec<FolderMemberDto>,
+    /// An older separate invite link is still on (they can no longer be created).
     pub invite_enabled: bool,
-    pub invite_role: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberAddedResponse {
     pub user_id: Uuid,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct InvitationTokenResponse {
-    pub token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

@@ -15,7 +15,7 @@ use crate::errors::AppError;
 use crate::modules::auth::middleware::CurrentUser;
 use super::dto::{CreateFolderRequest, FolderDto, UpdateFolderRequest};
 use super::service::FoldersService;
-use crate::modules::responses::{CopiedShareResponse, ShareTokenResponse};
+use crate::modules::responses::{AcceptedInvitationResponse, CopiedShareResponse, ShareTokenResponse};
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +44,8 @@ pub struct PublicBookmarkItem {
 pub struct PublicShareResponse {
     pub folder: PublicFolderDto,
     pub bookmarks: Vec<PublicBookmarkItem>,
+    /// What the link grants; CONTRIBUTOR and EDITOR let a signed-in visitor join.
+    pub role: String,
 }
 
 pub fn router() -> Router<PgPool> {
@@ -55,7 +57,7 @@ fn router_routes() -> Router<PgPool> {
         .route("/", get(list_folders).post(create_folder))
         .merge(super::collaboration::router())
         .route("/:id", put(update_folder).delete(delete_folder))
-        .route("/:id/share", get(share_status).post(enable_share).put(enable_share).delete(revoke_share))
+        .route("/:id/share", get(share_status).post(enable_share).put(enable_share).patch(update_share).delete(revoke_share))
 }
 
 pub fn public_share_router() -> Router<PgPool> {
@@ -63,7 +65,10 @@ pub fn public_share_router() -> Router<PgPool> {
 }
 
 fn public_share_router_routes() -> Router<PgPool> {
-    Router::new().route("/:token", get(get_public_share)).route("/:token/copy", post(copy_public_share))
+    Router::new()
+        .route("/:token", get(get_public_share))
+        .route("/:token/copy", post(copy_public_share))
+        .route("/:token/join", post(join_public_share))
 }
 
 #[utoipa::path(
@@ -169,10 +174,62 @@ pub async fn enable_share(
     State(pool): State<PgPool>,
     CurrentUser(user): CurrentUser,
     Path(folder_id): Path<Uuid>,
+    body: Option<Json<ShareEnableRequest>>,
 ) -> Result<Json<crate::modules::responses::ShareTokenResponse>, AppError> {
+    let role = body.and_then(|Json(req)| req.role).unwrap_or_else(|| "VIEWER".into());
+    super::collaboration::validate_role(&role)?;
     let service = FoldersService::new(pool);
-    let token = service.enable_share(user.id, folder_id).await?;
-    Ok(Json(ShareTokenResponse { share_token: token.into() }))
+    let token = service.enable_share(user.id, folder_id, &role).await?;
+    Ok(Json(ShareTokenResponse { share_token: token.into(), expires_at: None, role }))
+}
+
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareEnableRequest {
+    /// What the new link grants; defaults to VIEWER.
+    pub role: Option<String>,
+}
+
+/// Change an active link's role, its expiry, or both. Absent fields stay unchanged.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareUpdateRequest {
+    pub role: Option<String>,
+    /// Days from now until the link stops working; null removes the expiry.
+    #[serde(default, deserialize_with = "super::dto::double_option")]
+    #[schema(value_type = Option<u32>)]
+    pub expires_in_days: Option<Option<u32>>,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/v1/folders/{id}/share",
+    params(
+        ("id" = Uuid, Path, description = "Folder ID")
+    ),
+    request_body = ShareUpdateRequest,
+    responses(
+        (status = 200, description = "Link updated", body = ShareTokenResponse)
+    ),
+    tag = "folders"
+)]
+pub async fn update_share(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+    Path(folder_id): Path<Uuid>,
+    Json(req): Json<ShareUpdateRequest>,
+) -> Result<Json<ShareTokenResponse>, AppError> {
+    if req.role.is_none() && req.expires_in_days.is_none() {
+        return Err(AppError::BadRequest("Nothing to update".into()));
+    }
+    if let Some(role) = &req.role {
+        super::collaboration::validate_role(role)?;
+    }
+    let expires_at = req.expires_in_days.map(super::dto::link_expiry).transpose()?;
+    let (token, role, expires_at) = FoldersService::new(pool)
+        .update_share(user.id, folder_id, req.role.as_deref(), expires_at)
+        .await?;
+    Ok(Json(ShareTokenResponse { share_token: token, expires_at, role }))
 }
 
 #[utoipa::path(
@@ -193,7 +250,7 @@ pub async fn revoke_share(
 ) -> Result<Json<crate::modules::responses::ShareTokenResponse>, AppError> {
     let service = FoldersService::new(pool);
     service.revoke_share(user.id, folder_id).await?;
-    Ok(Json(ShareTokenResponse { share_token: None }))
+    Ok(Json(ShareTokenResponse { share_token: None, expires_at: None, role: "VIEWER".into() }))
 }
 
 #[utoipa::path(
@@ -213,7 +270,7 @@ pub async fn get_public_share(
     Path(token): Path<String>,
 ) -> Result<Json<PublicShareResponse>, AppError> {
     let service = FoldersService::new(pool.clone());
-    let (folder, owner_id) = service.get_shared_folder(&token).await?;
+    let (folder, owner_id, role) = service.get_shared_folder(&token).await?;
 
     // Fetch bookmarks for this folder, excluding notes, archived items, and deleted items
     let rows = sqlx::query_as::<
@@ -269,7 +326,60 @@ pub async fn get_public_share(
             description: folder.description,
         },
         bookmarks,
+        role,
     }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/share/{token}/join",
+    params(
+        ("token" = String, Path, description = "Public share token")
+    ),
+    responses(
+        (status = 200, description = "Joined the folder with the link's role", body = AcceptedInvitationResponse),
+        (status = 404, description = "Shared collection not found or expired")
+    ),
+    tag = "folders"
+)]
+/// Opens a shared folder in the visitor's own Cabinet, like Google Drive's "Shared with me":
+/// the visitor becomes a member with the link's role. An existing higher role is kept.
+pub async fn join_public_share(
+    State(pool): State<PgPool>,
+    CurrentUser(user): CurrentUser,
+    Path(token): Path<String>,
+) -> Result<Json<AcceptedInvitationResponse>, AppError> {
+    use sha2::{Digest, Sha256};
+    let mut tx = pool.begin().await?;
+    let token_hash = Sha256::digest(token.as_bytes()).to_vec();
+    // Lock the folder row so turning the link off cannot race admission.
+    let (folder_id, owner_id, role): (Uuid, Uuid, String) = sqlx::query_as(
+        "SELECT id, user_id, share_role FROM folders WHERE share_token_hash = $1 AND (share_expires_at IS NULL OR share_expires_at > now()) FOR SHARE",
+    )
+    .bind(token_hash)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Shared collection not found".into()))?;
+
+    if owner_id != user.id {
+        sqlx::query(
+            r#"
+            INSERT INTO folder_members (folder_id, user_id, role) VALUES ($1, $2, $3)
+            ON CONFLICT (folder_id, user_id) DO UPDATE SET role = CASE
+                WHEN array_position(ARRAY['VIEWER', 'CONTRIBUTOR', 'EDITOR'], EXCLUDED.role)
+                   > array_position(ARRAY['VIEWER', 'CONTRIBUTOR', 'EDITOR'], folder_members.role)
+                THEN EXCLUDED.role ELSE folder_members.role END
+            "#,
+        )
+        .bind(folder_id)
+        .bind(user.id)
+        .bind(role)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(Json(AcceptedInvitationResponse { folder_id }))
 }
 
 #[utoipa::path(
@@ -293,7 +403,7 @@ pub async fn copy_public_share(
 
     let token_hash = Sha256::digest(token.as_bytes()).to_vec();
     let (source, name): (Uuid, String) = sqlx::query_as(
-        "SELECT id, name FROM folders WHERE share_token_hash = $1 FOR SHARE",
+        "SELECT id, name FROM folders WHERE share_token_hash = $1 AND (share_expires_at IS NULL OR share_expires_at > now()) FOR SHARE",
     )
     .bind(token_hash)
     .fetch_optional(&mut *tx)
@@ -367,13 +477,17 @@ pub async fn share_status(
     CurrentUser(user): CurrentUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<crate::modules::responses::ShareTokenResponse>, AppError> {
-    let token: Option<String> =
-        sqlx::query_scalar("SELECT share_token FROM folders WHERE id = $1 AND user_id = $2")
+    let (token, expires_at, role): (Option<String>, Option<DateTime<Utc>>, String) =
+        sqlx::query_as("SELECT share_token, share_expires_at, share_role FROM folders WHERE id = $1 AND user_id = $2")
             .bind(id)
             .bind(user.id)
             .fetch_optional(&pool)
             .await?
             .ok_or_else(|| AppError::NotFound("Folder not found".into()))?;
 
-    Ok(Json(ShareTokenResponse { share_token: token.into() }))
+    // An expired link reads as turned off.
+    if expires_at.is_some_and(|at| at <= Utc::now()) {
+        return Ok(Json(ShareTokenResponse { share_token: None, expires_at: None, role: "VIEWER".into() }));
+    }
+    Ok(Json(ShareTokenResponse { share_token: token, expires_at, role }))
 }

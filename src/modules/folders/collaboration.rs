@@ -1,16 +1,15 @@
 use axum::{
     extract::{Path, State},
-    routing::{get, patch, post, put},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
-use rand::RngCore;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::errors::AppError;
-use crate::modules::responses::{AcceptedInvitationResponse, CollaborationResponse, FolderMemberDto, FolderUserDto, InvitationTokenResponse, MemberAddedResponse, RemovedResponse, UpdatedResponse};
+use crate::modules::responses::{AcceptedInvitationResponse, CollaborationResponse, FolderMemberDto, FolderUserDto, MemberAddedResponse, RemovedResponse, UpdatedResponse};
 use crate::modules::auth::middleware::CurrentUser;
 
 pub fn router() -> Router<PgPool> {
@@ -18,7 +17,7 @@ pub fn router() -> Router<PgPool> {
         .route("/:id/collaboration", get(collaboration))
         .route("/:id/members", post(add_member))
         .route("/:id/members/:member", patch(change_member).delete(remove_member))
-        .route("/:id/invitation", put(invite).patch(change_invite).delete(remove_invite))
+        .route("/:id/invitation", delete(remove_invite))
         .route("/invitations/:token/accept", post(accept))
 }
 
@@ -51,7 +50,7 @@ async fn require_owner(pool: &PgPool, actor: Uuid, folder: Uuid) -> Result<(), A
     Ok(())
 }
 
-fn validate_role(role: &str) -> Result<(), AppError> {
+pub(crate) fn validate_role(role: &str) -> Result<(), AppError> {
     if !["VIEWER", "CONTRIBUTOR", "EDITOR"].contains(&role) {
         return Err(AppError::BadRequest("Invalid folder role".into()));
     }
@@ -101,12 +100,11 @@ pub async fn collaboration(
     .fetch_all(&pool)
     .await?;
 
-    let invitation: Option<String> = sqlx::query_scalar(
-        "SELECT role FROM folder_invitations WHERE folder_id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&pool)
-    .await?;
+    // Only older invite links remain; the owner can turn them off.
+    let invite_enabled: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM folder_invitations WHERE folder_id = $1)")
+        .bind(id)
+        .fetch_one(&pool)
+        .await?;
 
     Ok(Json(CollaborationResponse {
         owner: FolderUserDto { id: owner.0, name: owner.1, email: owner.2 },
@@ -118,8 +116,7 @@ pub async fn collaboration(
                 user: FolderUserDto { id, name, email },
             })
             .collect(),
-        invite_enabled: invitation.is_some(),
-        invite_role: invitation,
+        invite_enabled,
     }))
 }
 
@@ -248,80 +245,6 @@ pub async fn remove_member(
 
     tx.commit().await?;
     Ok(Json(RemovedResponse { removed: true }))
-}
-
-#[utoipa::path(
-    put,
-    path = "/v1/folders/{id}/invitation",
-    params(
-        ("id" = Uuid, Path, description = "Folder ID"),
-    ),
-    responses(
-        (status = 200, description = "OK", body = InvitationTokenResponse)
-    ),
-    tag = "folders"
-)]
-pub async fn invite(
-    State(pool): State<PgPool>,
-    CurrentUser(user): CurrentUser,
-    Path(id): Path<Uuid>,
-    Json(req): Json<RoleRequest>,
-) -> Result<Json<crate::modules::responses::InvitationTokenResponse>, AppError> {
-    require_owner(&pool, user.id, id).await?;
-    validate_role(&req.role)?;
-
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    let token = hex::encode(bytes);
-    let token_hash = Sha256::digest(token.as_bytes()).to_vec();
-
-    sqlx::query(
-        r#"
-        INSERT INTO folder_invitations (folder_id, token_hash, role)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (folder_id) DO UPDATE SET token_hash = $2, role = $3, created_at = now()
-        "#,
-    )
-    .bind(id)
-    .bind(token_hash)
-    .bind(req.role)
-    .execute(&pool)
-    .await?;
-
-    Ok(Json(InvitationTokenResponse { token }))
-}
-
-#[utoipa::path(
-    patch,
-    path = "/v1/folders/{id}/invitation",
-    params(
-        ("id" = Uuid, Path, description = "Folder ID"),
-    ),
-    responses(
-        (status = 200, description = "OK", body = UpdatedResponse)
-    ),
-    tag = "folders"
-)]
-pub async fn change_invite(
-    State(pool): State<PgPool>,
-    CurrentUser(user): CurrentUser,
-    Path(id): Path<Uuid>,
-    Json(req): Json<RoleRequest>,
-) -> Result<Json<crate::modules::responses::UpdatedResponse>, AppError> {
-    require_owner(&pool, user.id, id).await?;
-    validate_role(&req.role)?;
-
-    let r = sqlx::query("UPDATE folder_invitations SET role = $2 WHERE folder_id = $1")
-        .bind(id)
-        .bind(req.role)
-        .execute(&pool)
-        .await?;
-
-    if r.rows_affected() == 0 {
-        return Err(AppError::NotFound("Invitation not found".into()));
-    }
-
-    Ok(Json(UpdatedResponse { updated: true }))
 }
 
 #[utoipa::path(

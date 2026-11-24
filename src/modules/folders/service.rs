@@ -25,6 +25,7 @@ impl FoldersService {
                     'parent_id', CASE WHEN f.user_id = $1 THEN f.parent_id ELSE NULL END,
                     'access', CASE WHEN f.user_id = $1 THEN 'OWNER' ELSE m.role END,
                     'share_enabled', f.share_token_hash IS NOT NULL
+                        AND (f.share_expires_at IS NULL OR f.share_expires_at > now())
                 )
             FROM folders f
             LEFT JOIN folder_members m ON m.folder_id = f.id AND m.user_id = $1
@@ -214,7 +215,7 @@ impl FoldersService {
         Ok(())
     }
 
-    pub async fn enable_share(&self, user_id: Uuid, folder_id: Uuid) -> Result<String, AppError> {
+    pub async fn enable_share(&self, user_id: Uuid, folder_id: Uuid, role: &str) -> Result<String, AppError> {
         let mut raw_bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut raw_bytes);
         let raw_token = hex::encode(raw_bytes);
@@ -226,7 +227,7 @@ impl FoldersService {
         let res = sqlx::query(
             r#"
             UPDATE folders
-            SET share_token_hash = $3, share_token = $4, share_enabled_at = NOW(), updated_at = NOW()
+            SET share_token_hash = $3, share_token = $4, share_role = $5, share_enabled_at = NOW(), share_expires_at = NULL, updated_at = NOW()
             WHERE id = $1 AND user_id = $2
             "#,
         )
@@ -234,6 +235,7 @@ impl FoldersService {
         .bind(user_id)
         .bind(&token_hash)
         .bind(&raw_token)
+        .bind(role)
         .execute(&self.pool)
         .await?;
 
@@ -248,7 +250,7 @@ impl FoldersService {
         let res = sqlx::query(
             r#"
             UPDATE folders
-            SET share_token_hash = NULL, share_token = NULL, share_enabled_at = NULL, updated_at = NOW()
+            SET share_token_hash = NULL, share_token = NULL, share_enabled_at = NULL, share_expires_at = NULL, updated_at = NOW()
             WHERE id = $1 AND user_id = $2
             "#,
         )
@@ -264,7 +266,39 @@ impl FoldersService {
         Ok(())
     }
 
-    pub async fn get_shared_folder(&self, raw_token: &str) -> Result<(FolderDto, Uuid), AppError> {
+    /// Changes an active link's role and/or expiry (None leaves a field unchanged). An expired
+    /// link cannot be revived this way; turning sharing on again makes a new one.
+    pub async fn update_share(
+        &self,
+        user_id: Uuid,
+        folder_id: Uuid,
+        role: Option<&str>,
+        expires_at: Option<Option<chrono::DateTime<Utc>>>,
+    ) -> Result<(Option<String>, String, Option<chrono::DateTime<Utc>>), AppError> {
+        sqlx::query_as(
+            r#"
+            UPDATE folders
+            SET share_role = COALESCE($3, share_role),
+                share_expires_at = CASE WHEN $4 THEN $5 ELSE share_expires_at END,
+                updated_at = NOW()
+            WHERE id = $1 AND user_id = $2
+              AND share_token_hash IS NOT NULL
+              AND (share_expires_at IS NULL OR share_expires_at > now())
+            RETURNING share_token, share_role, share_expires_at
+            "#,
+        )
+        .bind(folder_id)
+        .bind(user_id)
+        .bind(role)
+        .bind(expires_at.is_some())
+        .bind(expires_at.flatten())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Public link not found or already expired".to_string()))
+    }
+
+    /// The shared folder, its owner, and the role the link grants.
+    pub async fn get_shared_folder(&self, raw_token: &str) -> Result<(FolderDto, Uuid, String), AppError> {
         let mut hasher = Sha256::new();
         hasher.update(raw_token.as_bytes());
         let token_hash = hasher.finalize().to_vec();
@@ -280,12 +314,14 @@ impl FoldersService {
                 i32,
                 chrono::DateTime<Utc>,
                 chrono::DateTime<Utc>,
+                String,
             ),
         >(
             r#"
-            SELECT id, user_id, name, description, parent_id, position, created_at, updated_at
+            SELECT id, user_id, name, description, parent_id, position, created_at, updated_at, share_role
             FROM folders
             WHERE share_token_hash = $1
+              AND (share_expires_at IS NULL OR share_expires_at > now())
             "#,
         )
         .bind(&token_hash)
@@ -308,6 +344,7 @@ impl FoldersService {
                 updated_at: row.7,
             },
             row.1, // user_id
+            row.8, // share_role
         ))
     }
 }
