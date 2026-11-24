@@ -367,6 +367,16 @@
             }
           },
           {
+            "name": "unsorted",
+            "in": "query",
+            "description": "Only items that are not in any folder.",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "nullable": true
+            }
+          },
+          {
             "name": "status",
             "in": "query",
             "required": false,
@@ -1318,47 +1328,6 @@
       }
     },
     "/v1/folders/{id}/invitation": {
-      "put": {
-        "tags": [
-          "folders"
-        ],
-        "operationId": "invite",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Folder ID",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "description": "",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RoleRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/InvitationTokenResponse"
-                }
-              }
-            }
-          }
-        }
-      },
       "delete": {
         "tags": [
           "folders"
@@ -1383,47 +1352,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RemovedResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "folders"
-        ],
-        "operationId": "change_invite",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Folder ID",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "description": "",
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RoleRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UpdatedResponse"
                 }
               }
             }
@@ -1615,6 +1543,22 @@
             }
           }
         ],
+        "requestBody": {
+          "description": "",
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ShareEnableRequest"
+                  }
+                ],
+                "nullable": true
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "description": "Share token generated",
@@ -1648,6 +1592,46 @@
         "responses": {
           "200": {
             "description": "Share revoked successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareTokenResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "folders"
+        ],
+        "operationId": "update_share",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShareUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Link updated",
             "content": {
               "application/json": {
                 "schema": {
@@ -1893,6 +1877,42 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/share/{token}/join": {
+      "post": {
+        "tags": [
+          "folders"
+        ],
+        "summary": "Opens a shared folder in the visitor's own Cabinet, like Google Drive's \"Shared with me\":",
+        "description": "the visitor becomes a member with the link's role. An existing higher role is kept.",
+        "operationId": "join_public_share",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Public share token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Joined the folder with the link's role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedInvitationResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Shared collection not found or expired"
           }
         }
       }
@@ -2713,11 +2733,8 @@
         ],
         "properties": {
           "inviteEnabled": {
-            "type": "boolean"
-          },
-          "inviteRole": {
-            "type": "string",
-            "nullable": true
+            "type": "boolean",
+            "description": "An older separate invite link is still on (they can no longer be created)."
           },
           "members": {
             "type": "array",
@@ -3104,17 +3121,6 @@
           "id": {
             "type": "string",
             "format": "uuid"
-          }
-        }
-      },
-      "InvitationTokenResponse": {
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "properties": {
-          "token": {
-            "type": "string"
           }
         }
       },
@@ -3555,7 +3561,8 @@
         "type": "object",
         "required": [
           "folder",
-          "bookmarks"
+          "bookmarks",
+          "role"
         ],
         "properties": {
           "bookmarks": {
@@ -3566,6 +3573,10 @@
           },
           "folder": {
             "$ref": "#/components/schemas/PublicFolderDto"
+          },
+          "role": {
+            "type": "string",
+            "description": "What the link grants; CONTRIBUTOR and EDITOR let a signed-in visitor join."
           }
         }
       },
@@ -3864,10 +3875,50 @@
           }
         }
       },
-      "ShareTokenResponse": {
+      "ShareEnableRequest": {
         "type": "object",
         "properties": {
+          "role": {
+            "type": "string",
+            "description": "What the new link grants; defaults to VIEWER.",
+            "nullable": true
+          }
+        }
+      },
+      "ShareTokenResponse": {
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the public link stops working; null never expires.",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "description": "What the link grants: VIEWER (no sign-in) or CONTRIBUTOR/EDITOR (join after sign-in)."
+          },
           "shareToken": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "ShareUpdateRequest": {
+        "type": "object",
+        "description": "Change an active link's role, its expiry, or both. Absent fields stay unchanged.",
+        "properties": {
+          "expiresInDays": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Days from now until the link stops working; null removes the expiry.",
+            "nullable": true,
+            "minimum": 0
+          },
+          "role": {
             "type": "string",
             "nullable": true
           }
